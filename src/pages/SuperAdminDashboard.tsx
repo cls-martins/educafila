@@ -12,7 +12,7 @@ import { GraduationCap, BookOpen, RotateCcw, Shield, LogOut, Plus, School, Searc
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
-const CURSOS = ['Informática', 'Enfermagem', 'Administração', 'Edificações'];
+const DEFAULT_CURSOS = ['Informática', 'Enfermagem', 'Administração', 'Edificações'];
 const ANOS = [1, 2, 3];
 
 const SuperAdminDashboard = () => {
