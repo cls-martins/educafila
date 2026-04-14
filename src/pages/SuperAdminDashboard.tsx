@@ -113,17 +113,17 @@ const SuperAdminDashboard = () => {
       const userId = authData.user?.id;
       if (!userId) throw new Error('Usuário não criado');
 
-      await supabase.from('profiles').insert({
+      const profileData = {
         user_id: userId,
         full_name: manualName,
         email: manualEmail.trim().toLowerCase(),
         school_id: selectedSchoolId,
         classroom_id: manualClassroomId || null,
-        gender: manualGender || null,
+        gender: (manualGender || null) as 'masculino' | 'feminino' | 'outro' | null,
         year: manualAno ? parseInt(manualAno) : null,
         is_active: true,
-      });
-      await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' });
+      };
+      await supabase.from('profiles').insert(profileData);
 
       setLastPassword(password);
       toast({ title: 'Aluno cadastrado!', description: `Senha: ${password}` });
