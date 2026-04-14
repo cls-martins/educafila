@@ -31,6 +31,7 @@ const SuperAdminDashboard = () => {
 
   // Classroom state
   const [classrooms, setClassrooms] = useState<any[]>([]);
+  const [courses, setCourses] = useState<any[]>([]);
   const [addClassroomOpen, setAddClassroomOpen] = useState(false);
   const [newClassroomName, setNewClassroomName] = useState('');
   const [newClassroomCurso, setNewClassroomCurso] = useState('');
