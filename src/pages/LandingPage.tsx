@@ -56,7 +56,7 @@ const LandingPage = () => {
           </p>
           <div className="flex flex-col gap-3 sm:flex-row animate-slide-up">
             <Link to="/login">
-              <Button variant="hero" size="lg" className="min-w-[180px] bg-card text-primary hover:bg-card/90">
+              <Button size="lg" className="min-w-[200px] bg-white text-primary font-bold text-base hover:bg-white/90 shadow-lg">
                 Acessar Sistema
               </Button>
             </Link>
