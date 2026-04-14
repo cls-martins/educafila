@@ -72,13 +72,14 @@ const SuperAdminDashboard = () => {
   };
 
   const handleAddClassroom = async () => {
-    if (!newClassroomName || !newClassroomCurso || !newClassroomAno || !selectedSchoolId) return;
-    const { error } = await supabase.from('classrooms').insert({
+    if (!newClassroomName || !newClassroomAno || !selectedSchoolId) return;
+    const insertData: { name: string; school_id: string; year: number; course_id?: string } = {
       name: newClassroomName,
       school_id: selectedSchoolId,
-      course: newClassroomCurso,
       year: parseInt(newClassroomAno),
-    });
+    };
+    if (newClassroomCurso) insertData.course_id = newClassroomCurso;
+    const { error } = await supabase.from('classrooms').insert(insertData);
     if (error) { toast({ title: 'Erro ao criar sala', description: error.message, variant: 'destructive' }); }
     else {
       toast({ title: 'Sala criada!' });
