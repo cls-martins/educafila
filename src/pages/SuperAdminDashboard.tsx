@@ -47,7 +47,7 @@ const SuperAdminDashboard = () => {
   const [lastPassword, setLastPassword] = useState('');
 
   useEffect(() => { fetchSchools(); }, []);
-  useEffect(() => { if (selectedSchoolId) fetchClassrooms(); }, [selectedSchoolId]);
+  useEffect(() => { if (selectedSchoolId) { fetchClassrooms(); fetchCourses(); } }, [selectedSchoolId]);
 
   const fetchSchools = async () => {
     const { data } = await supabase.from('schools').select('*').order('name');
