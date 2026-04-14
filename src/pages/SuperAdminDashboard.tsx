@@ -124,6 +124,7 @@ const SuperAdminDashboard = () => {
         is_active: true,
       };
       await supabase.from('profiles').insert(profileData);
+      await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
 
       setLastPassword(password);
       toast({ title: 'Aluno cadastrado!', description: `Senha: ${password}` });
