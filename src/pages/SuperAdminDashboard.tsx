@@ -321,7 +321,7 @@ const SuperAdminDashboard = () => {
                     <Card key={c.id} className="hover:shadow-md transition-shadow">
                       <CardContent className="p-4">
                         <p className="font-semibold text-foreground">{c.name}</p>
-                        <p className="text-xs text-muted-foreground">{c.course || 'Sem curso'} · {c.year ? `${c.year}° Ano` : ''}</p>
+                        <p className="text-xs text-muted-foreground">{c.courses?.name || 'Sem curso'} · {c.year ? `${c.year}° Ano` : ''}</p>
                       </CardContent>
                     </Card>
                   ))}
@@ -374,7 +374,7 @@ const SuperAdminDashboard = () => {
                         <SelectTrigger><SelectValue placeholder="Selecionar sala" /></SelectTrigger>
                         <SelectContent>
                           {classrooms.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name} — {c.course} {c.year}° Ano</SelectItem>
+                            <SelectItem key={c.id} value={c.id}>{c.name} — {c.courses?.name || ''} {c.year}° Ano</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
