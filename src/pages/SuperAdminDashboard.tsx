@@ -55,8 +55,13 @@ const SuperAdminDashboard = () => {
   };
 
   const fetchClassrooms = async () => {
-    const { data } = await supabase.from('classrooms').select('*').eq('school_id', selectedSchoolId).order('name');
+    const { data } = await supabase.from('classrooms').select('*, courses(name)').eq('school_id', selectedSchoolId).order('name');
     if (data) setClassrooms(data);
+  };
+
+  const fetchCourses = async () => {
+    const { data } = await supabase.from('courses').select('*').eq('school_id', selectedSchoolId).order('name');
+    if (data) setCourses(data);
   };
 
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId);
