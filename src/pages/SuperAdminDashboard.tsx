@@ -291,7 +291,10 @@ const SuperAdminDashboard = () => {
                         <Select value={newClassroomCurso} onValueChange={setNewClassroomCurso}>
                           <SelectTrigger><SelectValue placeholder="Selecionar curso" /></SelectTrigger>
                           <SelectContent>
-                            {CURSOS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                            {courses.length > 0
+                              ? courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)
+                              : DEFAULT_CURSOS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)
+                            }
                           </SelectContent>
                         </Select>
                       </div>
