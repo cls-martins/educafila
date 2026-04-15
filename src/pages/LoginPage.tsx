@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Eye, EyeOff, GraduationCap, BookOpen, Shield, Settings, Search, ArrowLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
+
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import logo from '@/assets/educafila-logo.png';
 
