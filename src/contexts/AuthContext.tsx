@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Session, User } from '@supabase/supabase-js';
 
@@ -41,6 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSchoolId, setActiveSchoolId] = useState<string | null>(null);
+  const initialized = useRef(false);
 
   const fetchUserData = async (userId: string) => {
     try {
@@ -65,8 +66,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const safetyTimeout = setTimeout(() => setLoading(false), 5000);
 
+    // Set up listener first
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      clearTimeout(safetyTimeout);
+      // Skip if this is the initial event and getSession already handled it
+      if (!initialized.current) return;
+      
       setSession(session);
       setUser(session?.user ?? null);
 
@@ -80,6 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     });
 
+    // Then get initial session
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       clearTimeout(safetyTimeout);
       if (error) {
@@ -92,6 +97,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (session?.user) fetchUserData(session.user.id);
       }
       setLoading(false);
+      // Mark as initialized so future onAuthStateChange events are processed
+      initialized.current = true;
     });
 
     return () => subscription.unsubscribe();

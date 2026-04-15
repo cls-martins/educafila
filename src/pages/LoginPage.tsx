@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Eye, EyeOff, GraduationCap, BookOpen, Shield, Settings, Search } from 'lucide-react';
+import { Eye, EyeOff, GraduationCap, BookOpen, Shield, Settings, Search, ArrowLeft } from 'lucide-react';
+
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import logo from '@/assets/educafila-logo.png';
 
@@ -65,6 +66,9 @@ const LoginPage = () => {
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-8">
       <Card className="w-full max-w-md shadow-elevated">
         <CardHeader className="items-center text-center">
+          <Link to="/" className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors self-start">
+            <ArrowLeft className="h-3.5 w-3.5" /> Voltar ao início
+          </Link>
           <img src={logo} alt="EducaFila" width={80} height={80} className="mb-2" />
           <CardTitle className="text-2xl font-bold text-foreground">EducaFila</CardTitle>
           <CardDescription>Selecione seu tipo de acesso</CardDescription>
