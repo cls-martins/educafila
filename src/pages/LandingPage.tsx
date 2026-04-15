@@ -22,7 +22,7 @@ const features = [
   },
   {
     icon: BarChart3,
-    title: '122 Escolas',
+    title: 'Escolas Profissionais',
     desc: 'Sistema escalável para todas as EEEPs do Estado do Ceará.',
   },
 ];
@@ -51,8 +51,7 @@ const LandingPage = () => {
             Gestão Inteligente de Filas Escolares
           </p>
           <p className="mb-8 max-w-2xl text-sm text-primary-foreground/75 md:text-base animate-slide-up">
-            Sistema integrado para organização do uso do banheiro nas 122 EEEPs do Ceará.
-            Controle por sala, cronômetro automático e penalidades progressivas.
+            Sistema integrado para organização do uso do banheiro nas EEEPs do Ceará.
           </p>
           <div className="flex flex-col gap-3 sm:flex-row animate-slide-up">
             <Link to="/login">
