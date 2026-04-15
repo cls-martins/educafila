@@ -8,9 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { GraduationCap, BookOpen, RotateCcw, Shield, LogOut, Plus, School, Search, UserPlus, DoorOpen, Upload } from 'lucide-react';
+import { GraduationCap, BookOpen, RotateCcw, Shield, LogOut, Plus, School, Search, UserPlus, DoorOpen, Upload, ArrowLeft, UserX, Users } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 
 const DEFAULT_CURSOS = ['Informática', 'Enfermagem', 'Administração', 'Edificações'];
 const ANOS = [1, 2, 3];
@@ -37,17 +38,30 @@ const SuperAdminDashboard = () => {
   const [newClassroomCurso, setNewClassroomCurso] = useState('');
   const [newClassroomAno, setNewClassroomAno] = useState('');
 
-  // Manual student registration
+  // Classroom panel state
+  const [selectedClassroom, setSelectedClassroom] = useState<any>(null);
+
+  // Manual registration (aluno inside classroom)
   const [manualName, setManualName] = useState('');
   const [manualEmail, setManualEmail] = useState('');
   const [manualGender, setManualGender] = useState('');
-  const [manualClassroomId, setManualClassroomId] = useState('');
-  const [manualAno, setManualAno] = useState('');
   const [registering, setRegistering] = useState(false);
   const [lastPassword, setLastPassword] = useState('');
 
+  // Manual registration (professor/gestão)
+  const [staffName, setStaffName] = useState('');
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffRole, setStaffRole] = useState<'professor' | 'gestao'>('professor');
+  const [staffRegistering, setStaffRegistering] = useState(false);
+  const [lastStaffPassword, setLastStaffPassword] = useState('');
+
+  // Staff list (professors/gestão)
+  const [staffList, setStaffList] = useState<any[]>([]);
+
   useEffect(() => { fetchSchools(); }, []);
-  useEffect(() => { if (selectedSchoolId) { fetchClassrooms(); fetchCourses(); } }, [selectedSchoolId]);
+  useEffect(() => {
+    if (selectedSchoolId) { fetchClassrooms(); fetchCourses(); fetchStaff(); }
+  }, [selectedSchoolId]);
 
   const fetchSchools = async () => {
     const { data } = await supabase.from('schools').select('*').order('name');
@@ -62,6 +76,20 @@ const SuperAdminDashboard = () => {
   const fetchCourses = async () => {
     const { data } = await supabase.from('courses').select('*').eq('school_id', selectedSchoolId).order('name');
     if (data) setCourses(data);
+  };
+
+  const fetchStaff = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*, user_roles(role)')
+      .eq('school_id', selectedSchoolId)
+      .in('user_roles.role', ['professor', 'gestao'])
+      .order('full_name');
+    if (data) {
+      // Filter to only those who actually have prof/gestao roles
+      const filtered = data.filter((p: any) => p.user_roles && p.user_roles.length > 0);
+      setStaffList(filtered);
+    }
   };
 
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId);
@@ -102,8 +130,9 @@ const SuperAdminDashboard = () => {
     return `${clean}@edu2026`;
   };
 
+  // Register student inside a classroom panel (auto-assigns classroom)
   const handleManualRegister = async () => {
-    if (!manualName || !manualEmail || !selectedSchoolId) {
+    if (!manualName || !manualEmail || !selectedSchoolId || !selectedClassroom) {
       toast({ title: 'Preencha nome e email', variant: 'destructive' });
       return;
     }
@@ -119,17 +148,16 @@ const SuperAdminDashboard = () => {
       const userId = authData.user?.id;
       if (!userId) throw new Error('Usuário não criado');
 
-      const profileData = {
+      await supabase.from('profiles').insert({
         user_id: userId,
         full_name: manualName,
         email: manualEmail.trim().toLowerCase(),
         school_id: selectedSchoolId,
-        classroom_id: manualClassroomId || null,
+        classroom_id: selectedClassroom.id,
         gender: (manualGender || null) as 'masculino' | 'feminino' | 'outro' | null,
-        year: manualAno ? parseInt(manualAno) : null,
+        year: selectedClassroom.year || null,
         is_active: true,
-      };
-      await supabase.from('profiles').insert(profileData);
+      });
       await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
 
       setLastPassword(password);
@@ -137,16 +165,63 @@ const SuperAdminDashboard = () => {
       setManualName('');
       setManualEmail('');
       setManualGender('');
-      setManualClassroomId('');
-      setManualAno('');
     } catch (err: any) {
       toast({ title: 'Erro ao cadastrar', description: err.message, variant: 'destructive' });
     }
     setRegistering(false);
   };
 
-  const handleCSVUpload = async (file: File, type: 'alunos' | 'professores' | 'gestao') => {
-    if (!selectedSchoolId) { toast({ title: 'Selecione uma escola primeiro', variant: 'destructive' }); return; }
+  // Register professor or gestão manually
+  const handleStaffRegister = async () => {
+    if (!staffName || !staffEmail || !selectedSchoolId) {
+      toast({ title: 'Preencha nome e email', variant: 'destructive' });
+      return;
+    }
+    setStaffRegistering(true);
+    const password = generatePassword(staffName);
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: staffEmail.trim().toLowerCase(),
+        password,
+        options: { data: { full_name: staffName } },
+      });
+      if (authError) throw authError;
+      const userId = authData.user?.id;
+      if (!userId) throw new Error('Usuário não criado');
+
+      await supabase.from('profiles').insert({
+        user_id: userId,
+        full_name: staffName,
+        email: staffEmail.trim().toLowerCase(),
+        school_id: selectedSchoolId,
+        is_active: true,
+      });
+      await supabase.from('user_roles').insert({ user_id: userId, role: staffRole as any });
+      if (staffRole === 'professor') {
+        await supabase.from('teacher_schools').insert({ user_id: userId, school_id: selectedSchoolId });
+      }
+
+      setLastStaffPassword(password);
+      toast({ title: `${staffRole === 'professor' ? 'Professor' : 'Gestão'} cadastrado!`, description: `Senha: ${password}` });
+      setStaffName('');
+      setStaffEmail('');
+      fetchStaff();
+    } catch (err: any) {
+      toast({ title: 'Erro ao cadastrar', description: err.message, variant: 'destructive' });
+    }
+    setStaffRegistering(false);
+  };
+
+  // Inactivate staff
+  const handleInactivateStaff = async (userId: string) => {
+    await supabase.from('profiles').update({ is_active: false }).eq('user_id', userId);
+    toast({ title: 'Usuário inativado!' });
+    fetchStaff();
+  };
+
+  // CSV upload for students inside classroom panel
+  const handleCSVUploadClassroom = async (file: File) => {
+    if (!selectedSchoolId || !selectedClassroom) return;
     setUploading(true);
     const text = await file.text();
     const lines = text.split('\n').filter((l) => l.trim());
@@ -164,19 +239,13 @@ const SuperAdminDashboard = () => {
         if (authError) { errorCount++; continue; }
         const userId = authData.user?.id;
         if (!userId) { errorCount++; continue; }
-        let classroomId: string | null = null;
-        if (row.turma || row.classroom) {
-          const { data: cls } = await supabase.from('classrooms').select('id').eq('school_id', selectedSchoolId).ilike('name', `%${row.turma || row.classroom}%`).limit(1).single();
-          classroomId = cls?.id || null;
-        }
         await supabase.from('profiles').insert({
           user_id: userId, full_name: fullName, email, school_id: selectedSchoolId,
-          classroom_id: classroomId, gender: (row.genero || row.gender || null) as any,
-          year: row.ano ? parseInt(row.ano) : null, is_active: true,
+          classroom_id: selectedClassroom.id,
+          gender: (row.genero || row.gender || null) as any,
+          year: selectedClassroom.year || null, is_active: true,
         });
-        const roleMap = { alunos: 'aluno', professores: 'professor', gestao: 'gestao' } as const;
-        await supabase.from('user_roles').insert({ user_id: userId, role: roleMap[type] });
-        if (type === 'professores') { await supabase.from('teacher_schools').insert({ user_id: userId, school_id: selectedSchoolId }); }
+        await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
         successCount++;
       } catch { errorCount++; }
     }
@@ -195,11 +264,100 @@ const SuperAdminDashboard = () => {
     setYearTurnLoading(false);
   };
 
-  const uploadSections = [
-    { key: 'alunos' as const, label: 'Alunos', icon: GraduationCap, desc: 'CSV: nome, email, genero, ano, turma' },
-    { key: 'professores' as const, label: 'Professores', icon: BookOpen, desc: 'CSV: nome, email' },
-    { key: 'gestao' as const, label: 'Gestão/Direção', icon: Shield, desc: 'CSV: nome, email' },
-  ];
+  // Classroom panel view
+  if (selectedClassroom) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="border-b border-border bg-primary px-4 py-3">
+          <div className="container mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="sm" className="text-primary-foreground hover:bg-primary-foreground/10" onClick={() => setSelectedClassroom(null)}>
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <div>
+                <h1 className="text-lg font-bold text-primary-foreground">{selectedClassroom.name}</h1>
+                <p className="text-xs text-primary-foreground/70">{selectedClassroom.courses?.name || ''} · {selectedClassroom.year}° Ano · {selectedSchool?.name}</p>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" className="text-primary-foreground hover:bg-primary-foreground/10" onClick={signOut}>
+              <LogOut className="mr-1 h-4 w-4" /> Sair
+            </Button>
+          </div>
+        </header>
+
+        <main className="container mx-auto px-4 py-6 space-y-6">
+          <Tabs defaultValue="cadastrar" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="cadastrar"><UserPlus className="h-3.5 w-3.5 mr-1" />Cadastrar Aluno</TabsTrigger>
+              <TabsTrigger value="importar"><Upload className="h-3.5 w-3.5 mr-1" />Importar em Massa</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="cadastrar" className="pt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <UserPlus className="h-5 w-5 text-primary" /> Cadastrar Aluno
+                  </CardTitle>
+                  <CardDescription>Sala: <strong>{selectedClassroom.name}</strong> — O aluno será vinculado automaticamente a esta sala.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label>Nome Completo *</Label>
+                      <Input value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="Maria Silva" />
+                    </div>
+                    <div>
+                      <Label>Email *</Label>
+                      <Input type="email" value={manualEmail} onChange={(e) => setManualEmail(e.target.value)} placeholder="maria@aluno.ce.gov.br" />
+                    </div>
+                    <div>
+                      <Label>Gênero</Label>
+                      <Select value={manualGender} onValueChange={setManualGender}>
+                        <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="masculino">Masculino</SelectItem>
+                          <SelectItem value="feminino">Feminino</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <Button onClick={handleManualRegister} disabled={registering} className="w-full">
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    {registering ? 'Cadastrando...' : 'Cadastrar Aluno'}
+                  </Button>
+                  {lastPassword && (
+                    <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                      <p className="text-sm font-medium text-foreground">✅ Último aluno cadastrado</p>
+                      <p className="text-sm text-muted-foreground mt-1">Senha gerada: <strong className="text-foreground font-mono">{lastPassword}</strong></p>
+                      <p className="text-xs text-muted-foreground mt-1">Anote e envie ao aluno.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="importar" className="pt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Upload className="h-5 w-5 text-primary" /> Importar Alunos em Massa
+                  </CardTitle>
+                  <CardDescription>
+                    CSV com colunas: <strong>nome, email, genero</strong> (opcional).<br />
+                    Todos serão vinculados à sala <strong>{selectedClassroom.name}</strong> automaticamente.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Input type="file" accept=".csv" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleCSVUploadClassroom(file); }} disabled={uploading} />
+                  {uploading && <p className="text-xs text-muted-foreground mt-2">Importando...</p>}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -260,10 +418,9 @@ const SuperAdminDashboard = () => {
 
         {selectedSchool && (
           <Tabs defaultValue="salas" className="w-full">
-            <TabsList className="grid w-full grid-cols-5 text-xs">
+            <TabsList className="grid w-full grid-cols-4 text-xs">
               <TabsTrigger value="salas"><DoorOpen className="h-3.5 w-3.5 mr-1" />Salas</TabsTrigger>
-              <TabsTrigger value="cadastrar"><UserPlus className="h-3.5 w-3.5 mr-1" />Cadastrar</TabsTrigger>
-              <TabsTrigger value="importar"><Upload className="h-3.5 w-3.5 mr-1" />Importar</TabsTrigger>
+              <TabsTrigger value="equipe"><Users className="h-3.5 w-3.5 mr-1" />Equipe</TabsTrigger>
               <TabsTrigger value="ano"><RotateCcw className="h-3.5 w-3.5 mr-1" />Virada</TabsTrigger>
               <TabsTrigger value="novos"><GraduationCap className="h-3.5 w-3.5 mr-1" />Novos</TabsTrigger>
             </TabsList>
@@ -271,7 +428,7 @@ const SuperAdminDashboard = () => {
             {/* Salas Tab */}
             <TabsContent value="salas" className="pt-4 space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">Salas de <strong>{selectedSchool.name}</strong></p>
+                <p className="text-sm text-muted-foreground">Salas de <strong>{selectedSchool.name}</strong> — clique para abrir o painel</p>
                 <Dialog open={addClassroomOpen} onOpenChange={setAddClassroomOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm"><Plus className="mr-1 h-4 w-4" /> Criar Sala</Button>
@@ -318,10 +475,11 @@ const SuperAdminDashboard = () => {
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {classrooms.map((c) => (
-                    <Card key={c.id} className="hover:shadow-md transition-shadow">
+                    <Card key={c.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setSelectedClassroom(c)}>
                       <CardContent className="p-4">
                         <p className="font-semibold text-foreground">{c.name}</p>
                         <p className="text-xs text-muted-foreground">{c.courses?.name || 'Sem curso'} · {c.year ? `${c.year}° Ano` : ''}</p>
+                        <p className="text-xs text-primary mt-1">Clique para abrir →</p>
                       </CardContent>
                     </Card>
                   ))}
@@ -330,87 +488,99 @@ const SuperAdminDashboard = () => {
               <p className="text-xs text-muted-foreground">Total: {classrooms.length}/12 salas</p>
             </TabsContent>
 
-            {/* Cadastrar Manualmente Tab */}
-            <TabsContent value="cadastrar" className="pt-4">
+            {/* Equipe Tab — cadastrar professor/gestão + inativar */}
+            <TabsContent value="equipe" className="pt-4 space-y-4">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <UserPlus className="h-5 w-5 text-primary" /> Cadastrar Aluno Manualmente
+                    <UserPlus className="h-5 w-5 text-primary" /> Cadastrar Professor ou Gestão
                   </CardTitle>
-                  <CardDescription>Cadastre um aluno e receba a senha gerada automaticamente.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
                       <Label>Nome Completo *</Label>
-                      <Input value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="Maria Silva" />
+                      <Input value={staffName} onChange={(e) => setStaffName(e.target.value)} placeholder="João Silva" />
                     </div>
                     <div>
                       <Label>Email *</Label>
-                      <Input type="email" value={manualEmail} onChange={(e) => setManualEmail(e.target.value)} placeholder="maria@aluno.ce.gov.br" />
+                      <Input type="email" value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)} placeholder="joao@prof.ce.gov.br" />
                     </div>
                     <div>
-                      <Label>Gênero</Label>
-                      <Select value={manualGender} onValueChange={setManualGender}>
-                        <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                      <Label>Tipo</Label>
+                      <Select value={staffRole} onValueChange={(v) => setStaffRole(v as 'professor' | 'gestao')}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="masculino">Masculino</SelectItem>
-                          <SelectItem value="feminino">Feminino</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Ano</Label>
-                      <Select value={manualAno} onValueChange={setManualAno}>
-                        <SelectTrigger><SelectValue placeholder="Selecionar ano" /></SelectTrigger>
-                        <SelectContent>
-                          {ANOS.map((a) => <SelectItem key={a} value={String(a)}>{a}° Ano</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <Label>Sala</Label>
-                      <Select value={manualClassroomId} onValueChange={setManualClassroomId}>
-                        <SelectTrigger><SelectValue placeholder="Selecionar sala" /></SelectTrigger>
-                        <SelectContent>
-                          {classrooms.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name} — {c.courses?.name || ''} {c.year}° Ano</SelectItem>
-                          ))}
+                          <SelectItem value="professor">Professor</SelectItem>
+                          <SelectItem value="gestao">Gestão / Direção</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
-                  <Button onClick={handleManualRegister} disabled={registering} className="w-full">
+                  <Button onClick={handleStaffRegister} disabled={staffRegistering} className="w-full">
                     <UserPlus className="mr-2 h-4 w-4" />
-                    {registering ? 'Cadastrando...' : 'Cadastrar Aluno'}
+                    {staffRegistering ? 'Cadastrando...' : 'Cadastrar'}
                   </Button>
-                  {lastPassword && (
+                  {lastStaffPassword && (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-                      <p className="text-sm font-medium text-foreground">✅ Último aluno cadastrado</p>
-                      <p className="text-sm text-muted-foreground mt-1">Senha gerada: <strong className="text-foreground font-mono">{lastPassword}</strong></p>
-                      <p className="text-xs text-muted-foreground mt-1">Anote e envie ao aluno.</p>
+                      <p className="text-sm font-medium text-foreground">✅ Cadastrado com sucesso</p>
+                      <p className="text-sm text-muted-foreground mt-1">Senha: <strong className="text-foreground font-mono">{lastStaffPassword}</strong></p>
                     </div>
                   )}
                 </CardContent>
               </Card>
-            </TabsContent>
 
-            {/* Importar CSV Tab */}
-            <TabsContent value="importar" className="pt-4 space-y-4">
-              <p className="text-sm text-muted-foreground">Importando para: <strong>{selectedSchool.name}</strong></p>
-              {uploadSections.map((section) => (
-                <Card key={section.key}>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <section.icon className="h-5 w-5 text-primary" /> Importar {section.label}
-                    </CardTitle>
-                    <CardDescription>{section.desc}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Input type="file" accept=".csv" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleCSVUpload(file, section.key); }} disabled={uploading} />
-                  </CardContent>
-                </Card>
-              ))}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Users className="h-5 w-5 text-primary" /> Professores e Gestão
+                  </CardTitle>
+                  <CardDescription>Inative usuários que não fazem mais parte da escola.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {staffList.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Nenhum professor ou gestor cadastrado.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {staffList.map((s) => (
+                        <div key={s.id} className="flex items-center justify-between rounded-lg border p-3">
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{s.full_name}</p>
+                            <p className="text-xs text-muted-foreground">{s.email}</p>
+                            <div className="flex gap-1 mt-1">
+                              {s.user_roles?.map((r: any) => (
+                                <Badge key={r.role} variant={r.role === 'gestao' ? 'default' : 'secondary'} className="text-[10px]">
+                                  {r.role === 'professor' ? 'Professor' : 'Gestão'}
+                                </Badge>
+                              ))}
+                              {!s.is_active && <Badge variant="outline" className="text-[10px] text-destructive border-destructive">Inativo</Badge>}
+                            </div>
+                          </div>
+                          {s.is_active && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
+                                  <UserX className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Inativar {s.full_name}?</AlertDialogTitle>
+                                  <AlertDialogDescription>O usuário não poderá mais acessar o sistema.</AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => handleInactivateStaff(s.user_id)}>Inativar</AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* Virada de Ano Tab */}
@@ -451,11 +621,10 @@ const SuperAdminDashboard = () => {
                   <CardTitle className="flex items-center gap-2">
                     <GraduationCap className="h-5 w-5 text-primary" /> Importar Novos 1° Ano
                   </CardTitle>
-                  <CardDescription>CSV: nome, email, genero, turma</CardDescription>
+                  <CardDescription>CSV: nome, email, genero, turma — Selecione a sala na aba "Salas" para importar diretamente.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Input type="file" accept=".csv" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleCSVUpload(file, 'alunos'); }} disabled={uploading} />
-                  <p className="text-xs text-muted-foreground mt-2">Os alunos serão cadastrados automaticamente como 1° ano.</p>
+                  <p className="text-sm text-muted-foreground">Para importar alunos, acesse a aba <strong>Salas</strong>, clique na sala desejada e use a opção <strong>Importar em Massa</strong>.</p>
                 </CardContent>
               </Card>
             </TabsContent>
