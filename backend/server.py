@@ -247,6 +247,35 @@ async def create_student(body: StudentCreate, authorization: Optional[str] = Hea
     return {"user_id": user_id, "password": password, "email": email}
 
 
+@api_router.delete("/admin/user/{user_id}")
+async def delete_user(user_id: str, authorization: Optional[str] = Header(None)):
+    """Permanently delete a user and all related rows (profile, user_roles,
+    teacher_schools, queue_entries) + the auth user itself. Super_admin only."""
+    await verify_super_admin(authorization)
+    logger.info(f"delete_user request for user_id={user_id}")
+    async with httpx.AsyncClient(timeout=20) as client:
+        # Delete from dependent tables first. Ignore 404s (row may not exist).
+        for table in ("queue_entries", "teacher_schools", "user_roles", "profiles"):
+            r = await client.delete(
+                f"{SUPABASE_URL}/rest/v1/{table}?user_id=eq.{user_id}",
+                headers=SERVICE_HEADERS,
+            )
+            if r.status_code not in (200, 204, 404):
+                logger.warning(f"delete {table} for {user_id}: {r.status_code} {r.text[:200]}")
+        # Finally delete the auth user
+        r = await client.delete(
+            f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}",
+            headers=SERVICE_HEADERS,
+        )
+        if r.status_code not in (200, 204):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Falha ao apagar auth user: {r.text[:300]}",
+            )
+    logger.info(f"delete_user OK: {user_id}")
+    return {"ok": True}
+
+
 @api_router.post("/admin/students/bulk")
 async def bulk_students(body: BulkStudentsCreate, authorization: Optional[str] = Header(None)):
     """Bulk create students from a parsed list. Continues on error per-row."""

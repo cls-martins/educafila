@@ -12,7 +12,7 @@ import { BookOpen, RotateCcw, LogOut, Plus, School, Search, UserPlus, DoorOpen, 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { adminCreateStaff, adminCreateStudent, adminBulkStudents } from '@/lib/adminApi';
+import { adminCreateStaff, adminCreateStudent, adminBulkStudents, adminDeleteUser } from '@/lib/adminApi';
 
 const ANOS = [1, 2, 3];
 
@@ -192,6 +192,26 @@ const SuperAdminDashboard = () => {
     await supabase.from('profiles').update({ is_active: true }).eq('user_id', userId);
     toast({ title: 'Aluno reativado' });
     fetchStudents();
+  };
+
+  const handleDeleteStudent = async (userId: string, fullName: string) => {
+    try {
+      await adminDeleteUser(userId);
+      toast({ title: `${fullName} apagado definitivamente` });
+      fetchStudents();
+    } catch (err: any) {
+      toast({ title: 'Erro ao apagar', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteStaff = async (userId: string, fullName: string) => {
+    try {
+      await adminDeleteUser(userId);
+      toast({ title: `${fullName} apagado definitivamente` });
+      fetchStaff();
+    } catch (err: any) {
+      toast({ title: 'Erro ao apagar', description: err.message, variant: 'destructive' });
+    }
   };
 
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId);
@@ -533,9 +553,36 @@ const SuperAdminDashboard = () => {
                                 </AlertDialogContent>
                               </AlertDialog>
                             ) : (
-                              <Button variant="ghost" size="sm" onClick={() => handleReactivateStudent(s.user_id)}>
-                                Reativar
-                              </Button>
+                              <div className="flex gap-1">
+                                <Button variant="ghost" size="sm" onClick={() => handleReactivateStudent(s.user_id)}>
+                                  Reativar
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" title="Apagar definitivamente">
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Apagar {s.full_name} definitivamente?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Essa ação <strong>não pode ser desfeita</strong>. Todos os dados do aluno
+                                        (perfil, login, papéis e histórico) serão permanentemente removidos do banco.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleDeleteStudent(s.user_id, s.full_name)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Apagar definitivamente
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -907,13 +954,40 @@ const SuperAdminDashboard = () => {
                               </AlertDialogContent>
                             </AlertDialog>
                           ) : (
-                            <Button variant="ghost" size="sm" onClick={async () => {
-                              await supabase.from('profiles').update({ is_active: true }).eq('user_id', s.user_id);
-                              toast({ title: 'Usuário reativado' });
-                              fetchStaff();
-                            }}>
-                              Reativar
-                            </Button>
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="sm" onClick={async () => {
+                                await supabase.from('profiles').update({ is_active: true }).eq('user_id', s.user_id);
+                                toast({ title: 'Usuário reativado' });
+                                fetchStaff();
+                              }}>
+                                Reativar
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" title="Apagar definitivamente">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Apagar {s.full_name} definitivamente?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Essa ação <strong>não pode ser desfeita</strong>. Todos os dados do usuário
+                                      (perfil, login, papéis e vínculos) serão permanentemente removidos do banco.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteStaff(s.user_id, s.full_name)}
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    >
+                                      Apagar definitivamente
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
                           )}
                         </div>
                       ))}

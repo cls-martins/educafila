@@ -68,3 +68,19 @@ export async function adminBulkStudents(payload: {
     errors: Array<{ row: number; email?: string; reason: string }>;
   }>('/api/admin/students/bulk', payload);
 }
+
+export async function adminDeleteUser(userId: string): Promise<{ ok: boolean }> {
+  const headers = await authHeaders();
+  const res = await fetch(`${BACKEND_URL}/api/admin/user/${userId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  const text = await res.text();
+  let json: any = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
+  if (!res.ok) {
+    const msg = (json && (json.detail || json.message)) || text || `Erro ${res.status}`;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return json;
+}
