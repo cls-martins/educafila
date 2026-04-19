@@ -46,60 +46,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchUserData = async (userId: string) => {
     try {
       const [profileRes, rolesRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('user_id', userId).single(),
+        supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle(),
         supabase.from('user_roles').select('role').eq('user_id', userId),
       ]);
 
       if (profileRes.data) {
         setProfile(profileRes.data as UserProfile);
         setActiveSchoolId(profileRes.data.school_id);
+      } else {
+        setProfile(null);
       }
 
       if (rolesRes.data) {
         setRoles(rolesRes.data.map((r) => r.role as UserRole));
+      } else {
+        setRoles([]);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
+      setProfile(null);
+      setRoles([]);
     }
   };
 
+  // Loads session + profile + roles, then releases loading
+  const hydrate = async (newSession: Session | null) => {
+    setSession(newSession);
+    setUser(newSession?.user ?? null);
+    if (newSession?.user) {
+      await fetchUserData(newSession.user.id);
+    } else {
+      setProfile(null);
+      setRoles([]);
+      setActiveSchoolId(null);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const safetyTimeout = setTimeout(() => setLoading(false), 5000);
+    const safetyTimeout = setTimeout(() => setLoading(false), 8000);
 
     // Set up listener first
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       // Skip if this is the initial event and getSession already handled it
       if (!initialized.current) return;
-      
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        setTimeout(() => fetchUserData(session.user.id), 0);
-      } else {
-        setProfile(null);
-        setRoles([]);
-        setActiveSchoolId(null);
-      }
-      setLoading(false);
+      setLoading(true);
+      // defer to avoid supabase re-entrant warnings
+      setTimeout(() => { hydrate(newSession); }, 0);
     });
 
     // Then get initial session
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      clearTimeout(safetyTimeout);
-      if (error) {
-        supabase.auth.signOut().catch(() => {});
-        setSession(null);
-        setUser(null);
-      } else {
-        setSession(session);
-        setUser(session?.user ?? null);
-        if (session?.user) fetchUserData(session.user.id);
+    (async () => {
+      try {
+        const { data: { session: initial }, error } = await supabase.auth.getSession();
+        clearTimeout(safetyTimeout);
+        if (error) {
+          await supabase.auth.signOut().catch(() => {});
+          await hydrate(null);
+        } else {
+          await hydrate(initial);
+        }
+      } catch (e) {
+        clearTimeout(safetyTimeout);
+        await hydrate(null);
+      } finally {
+        initialized.current = true;
       }
-      setLoading(false);
-      // Mark as initialized so future onAuthStateChange events are processed
-      initialized.current = true;
-    });
+    })();
 
     return () => subscription.unsubscribe();
   }, []);

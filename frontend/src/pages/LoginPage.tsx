@@ -12,6 +12,24 @@ import { Eye, EyeOff, GraduationCap, BookOpen, Shield, Settings, Search, ArrowLe
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import logo from '@/assets/educafila-logo.png';
 
+type TabValue = 'aluno' | 'professor' | 'gestao' | 'admin';
+type UserRole = 'aluno' | 'professor' | 'gestao' | 'super_admin';
+
+// Which role the user must have to log in through a given tab
+const TAB_TO_ROLE: Record<TabValue, UserRole> = {
+  aluno: 'aluno',
+  professor: 'professor',
+  gestao: 'gestao',
+  admin: 'super_admin',
+};
+
+const TAB_LABEL: Record<TabValue, string> = {
+  aluno: 'Aluno',
+  professor: 'Professor',
+  gestao: 'Gestão/Direção',
+  admin: 'Administrador',
+};
+
 const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,7 +55,7 @@ const LoginPage = () => {
     s.city.toLowerCase().includes(schoolSearch.toLowerCase())
   );
 
-  const handleLogin = async (e: React.FormEvent, expectedDomain?: string) => {
+  const handleLogin = async (e: React.FormEvent, tabValue: TabValue, expectedDomain?: string) => {
     e.preventDefault();
     const trimmedEmail = email.trim().toLowerCase();
     if (expectedDomain && !trimmedEmail.endsWith(expectedDomain)) {
@@ -45,20 +63,54 @@ const LoginPage = () => {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password });
-    if (error) {
+    const { data, error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password });
+    if (error || !data.user) {
       toast({ title: 'Erro no login', description: 'Email ou senha incorretos.', variant: 'destructive' });
-    } else {
-      toast({ title: 'Login realizado!' });
-      navigate('/dashboard');
+      setLoading(false);
+      return;
     }
+
+    // Validate role matches the selected tab
+    const expectedRole = TAB_TO_ROLE[tabValue];
+    const { data: rolesData } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', data.user.id);
+    const userRoles: UserRole[] = (rolesData || []).map((r) => r.role as UserRole);
+
+    if (!userRoles.includes(expectedRole)) {
+      await supabase.auth.signOut();
+      toast({
+        title: 'Acesso não permitido',
+        description: `Sua conta não tem permissão para acessar como ${TAB_LABEL[tabValue]}.`,
+        variant: 'destructive',
+      });
+      setLoading(false);
+      return;
+    }
+
+    // Also check profile is_active
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('is_active')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
+    if (profileData && profileData.is_active === false) {
+      await supabase.auth.signOut();
+      toast({ title: 'Conta inativa', description: 'Sua conta está inativa. Procure a gestão da escola.', variant: 'destructive' });
+      setLoading(false);
+      return;
+    }
+
+    toast({ title: 'Login realizado!' });
+    navigate('/dashboard');
     setLoading(false);
   };
 
-  const loginTabs = [
+  const loginTabs: { value: TabValue; label: string; icon: any; domain?: string; desc: string; showSchoolSearch: boolean }[] = [
     { value: 'aluno', label: 'Aluno', icon: GraduationCap, domain: '@aluno.ce.gov.br', desc: 'Login com email institucional do aluno', showSchoolSearch: true },
-    { value: 'professor', label: 'Professor', icon: BookOpen, domain: '@prof.ce.gov.br', desc: 'Login com email institucional do professor', showSchoolSearch: false },
-    { value: 'gestao', label: 'Gestão', icon: Shield, domain: undefined, desc: 'Login para gestão e direção escolar', showSchoolSearch: false },
+    { value: 'professor', label: 'Professor', icon: BookOpen, domain: undefined, desc: 'Login com email cadastrado pela gestão', showSchoolSearch: false },
+    { value: 'gestao', label: 'Gestão', icon: Shield, domain: undefined, desc: 'Login para gestão, direção e coordenação', showSchoolSearch: false },
     { value: 'admin', label: 'Admin', icon: Settings, domain: undefined, desc: 'Painel de administração', showSchoolSearch: false },
   ];
 
@@ -85,7 +137,7 @@ const LoginPage = () => {
             </TabsList>
             {loginTabs.map((tab) => (
               <TabsContent key={tab.value} value={tab.value}>
-                <form onSubmit={(e) => handleLogin(e, tab.domain)} className="space-y-4 pt-4">
+                <form onSubmit={(e) => handleLogin(e, tab.value, tab.domain)} className="space-y-4 pt-4">
                   <p className="text-xs text-muted-foreground">{tab.desc}</p>
                   {tab.showSchoolSearch && (
                     <div className="space-y-2">

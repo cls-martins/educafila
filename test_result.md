@@ -101,3 +101,76 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  EducaFila (Supabase + Vite/React) bugs reportados pelo usuário:
+  1. Login só funciona na 2ª tentativa (redireciona pra /login de primeira)
+  2. Cadastro de professor/direção/coordenação não aparece na tabela "Equipe"
+  3. Não deve exigir @prof.ce.gov.br para professores
+  4. Usuário consegue logar em área errada (ex: professor entra na aba Gestão)
+  5. Ao criar escola, deve existir fluxo de Cursos que gera 1°/2°/3° ano automaticamente
+  6. Remover aba "Novos" do SuperAdminDashboard
+
+frontend:
+  - task: "Fix 1: AuthContext race condition (login 2x)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/contexts/AuthContext.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+  - task: "Fix 2: Staff register + query (session preserve, !inner)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/SuperAdminDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+  - task: "Fix 3: Remove @prof.ce.gov.br requirement"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/LoginPage.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+  - task: "Fix 4: Enforce tab→role mapping on login"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/LoginPage.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+  - task: "Fix 5: Courses tab + auto-generate 1°/2°/3° classrooms"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/SuperAdminDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+  - task: "Fix 6: Remove Novos tab"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/SuperAdminDashboard.tsx"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: true
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 0
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Fix 1: AuthContext race condition (login 2x)"
+    - "Fix 2: Staff register + query"
+    - "Fix 4: Enforce tab→role mapping on login"
+    - "Fix 5: Courses tab + auto-generate classrooms"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Implementing 6 frontend fixes on existing Supabase app. No backend changes. Will require manual/UI testing after implementation."

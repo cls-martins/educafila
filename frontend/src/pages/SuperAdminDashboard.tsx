@@ -8,13 +8,45 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { GraduationCap, BookOpen, RotateCcw, Shield, LogOut, Plus, School, Search, UserPlus, DoorOpen, Upload, ArrowLeft, UserX, Users } from 'lucide-react';
+import { BookOpen, RotateCcw, LogOut, Plus, School, Search, UserPlus, DoorOpen, Upload, ArrowLeft, UserX, Users, Pencil, Trash2 } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 
-const DEFAULT_CURSOS = ['Informática', 'Enfermagem', 'Administração', 'Edificações'];
 const ANOS = [1, 2, 3];
+
+/**
+ * Executes an auth.signUp() while preserving the currently-logged-in admin
+ * session. Supabase's signUp() automatically switches the client session to
+ * the newly created user, which (a) logs the admin out and (b) can break
+ * subsequent RLS-protected inserts. We capture the admin session before
+ * signUp and restore it immediately after.
+ */
+async function signUpPreservingAdmin(
+  email: string,
+  password: string,
+  fullName: string,
+): Promise<{ userId: string | null; error: any | null }> {
+  const { data: { session: adminSession } } = await supabase.auth.getSession();
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { full_name: fullName } },
+  });
+  // Always try to restore admin session, even if signUp errored
+  if (adminSession) {
+    try {
+      await supabase.auth.setSession({
+        access_token: adminSession.access_token,
+        refresh_token: adminSession.refresh_token,
+      });
+    } catch (e) {
+      console.error('Failed to restore admin session', e);
+    }
+  }
+  if (signUpError) return { userId: null, error: signUpError };
+  return { userId: signUpData.user?.id ?? null, error: null };
+}
 
 const SuperAdminDashboard = () => {
   const { profile, signOut } = useAuth();
@@ -38,8 +70,16 @@ const SuperAdminDashboard = () => {
   const [newClassroomCurso, setNewClassroomCurso] = useState('');
   const [newClassroomAno, setNewClassroomAno] = useState('');
 
+  // Courses state
+  const [newCourseName, setNewCourseName] = useState('');
+  const [creatingCourse, setCreatingCourse] = useState(false);
+  const [editCourseId, setEditCourseId] = useState<string | null>(null);
+  const [editCourseName, setEditCourseName] = useState('');
+
   // Classroom panel state
   const [selectedClassroom, setSelectedClassroom] = useState<any>(null);
+  const [renameClassroomOpen, setRenameClassroomOpen] = useState(false);
+  const [renameClassroomValue, setRenameClassroomValue] = useState('');
 
   // Manual registration (aluno inside classroom)
   const [manualName, setManualName] = useState('');
@@ -79,17 +119,19 @@ const SuperAdminDashboard = () => {
   };
 
   const fetchStaff = async () => {
-    const { data } = await supabase
+    // !inner forces the join to actually filter profiles by user_roles.role
+    const { data, error } = await supabase
       .from('profiles')
-      .select('*, user_roles(role)')
+      .select('*, user_roles!inner(role)')
       .eq('school_id', selectedSchoolId)
       .in('user_roles.role', ['professor', 'gestao'])
       .order('full_name');
-    if (data) {
-      // Filter to only those who actually have prof/gestao roles
-      const filtered = data.filter((p: any) => p.user_roles && p.user_roles.length > 0);
-      setStaffList(filtered);
+    if (error) {
+      console.error('fetchStaff error', error);
+      setStaffList([]);
+      return;
     }
+    setStaffList(data || []);
   };
 
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId);
@@ -100,9 +142,22 @@ const SuperAdminDashboard = () => {
 
   const handleAddSchool = async () => {
     if (!newSchoolName || !newSchoolCity) return;
-    const { error } = await supabase.from('schools').insert({ name: newSchoolName, city: newSchoolCity, crede: newSchoolCrede || null });
-    if (error) { toast({ title: 'Erro ao adicionar escola', variant: 'destructive' }); }
-    else { toast({ title: 'Escola adicionada!' }); setAddSchoolOpen(false); setNewSchoolName(''); setNewSchoolCity(''); setNewSchoolCrede(''); fetchSchools(); }
+    const { data, error } = await supabase
+      .from('schools')
+      .insert({ name: newSchoolName, city: newSchoolCity, crede: newSchoolCrede || null })
+      .select()
+      .single();
+    if (error) {
+      toast({ title: 'Erro ao adicionar escola', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Escola adicionada!', description: 'Agora cadastre os cursos na aba "Cursos".' });
+      setAddSchoolOpen(false);
+      setNewSchoolName('');
+      setNewSchoolCity('');
+      setNewSchoolCrede('');
+      await fetchSchools();
+      if (data?.id) setSelectedSchoolId(data.id);
+    }
   };
 
   const handleAddClassroom = async () => {
@@ -125,6 +180,85 @@ const SuperAdminDashboard = () => {
     }
   };
 
+  // ===== Courses =====
+  const handleCreateCourse = async () => {
+    if (!newCourseName.trim() || !selectedSchoolId) return;
+    setCreatingCourse(true);
+    try {
+      const { data: course, error: courseError } = await supabase
+        .from('courses')
+        .insert({ name: newCourseName.trim(), school_id: selectedSchoolId })
+        .select()
+        .single();
+      if (courseError) throw courseError;
+
+      // Auto-generate 1°, 2°, 3° ano classrooms for this course
+      const rows = ANOS.map((year) => ({
+        name: `${newCourseName.trim()} ${year}° Ano`,
+        school_id: selectedSchoolId,
+        year,
+        course_id: course.id,
+      }));
+      const { error: crError } = await supabase.from('classrooms').insert(rows);
+      if (crError) throw crError;
+
+      toast({ title: 'Curso criado!', description: 'Salas de 1°, 2° e 3° ano geradas automaticamente.' });
+      setNewCourseName('');
+      await fetchCourses();
+      await fetchClassrooms();
+    } catch (err: any) {
+      toast({ title: 'Erro ao criar curso', description: err.message, variant: 'destructive' });
+    }
+    setCreatingCourse(false);
+  };
+
+  const handleRenameCourse = async (courseId: string) => {
+    if (!editCourseName.trim()) return;
+    const { error } = await supabase
+      .from('courses')
+      .update({ name: editCourseName.trim() })
+      .eq('id', courseId);
+    if (error) {
+      toast({ title: 'Erro ao renomear', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Curso renomeado' });
+      setEditCourseId(null);
+      setEditCourseName('');
+      await fetchCourses();
+      await fetchClassrooms();
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    // Remove course reference from classrooms (keep the rooms) then delete course
+    await supabase.from('classrooms').update({ course_id: null }).eq('course_id', courseId);
+    const { error } = await supabase.from('courses').delete().eq('id', courseId);
+    if (error) {
+      toast({ title: 'Erro ao apagar curso', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Curso apagado' });
+      await fetchCourses();
+      await fetchClassrooms();
+    }
+  };
+
+  // ===== Classroom rename / delete =====
+  const handleRenameClassroom = async () => {
+    if (!selectedClassroom || !renameClassroomValue.trim()) return;
+    const { error } = await supabase
+      .from('classrooms')
+      .update({ name: renameClassroomValue.trim() })
+      .eq('id', selectedClassroom.id);
+    if (error) {
+      toast({ title: 'Erro ao renomear sala', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Sala renomeada' });
+      setSelectedClassroom({ ...selectedClassroom, name: renameClassroomValue.trim() });
+      setRenameClassroomOpen(false);
+      await fetchClassrooms();
+    }
+  };
+
   const generatePassword = (name: string) => {
     const clean = name.toLowerCase().replace(/\s+/g, '.').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     return `${clean}@edu2026`;
@@ -139,16 +273,15 @@ const SuperAdminDashboard = () => {
     setRegistering(true);
     const password = generatePassword(manualName);
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: manualEmail.trim().toLowerCase(),
+      const { userId, error: authError } = await signUpPreservingAdmin(
+        manualEmail.trim().toLowerCase(),
         password,
-        options: { data: { full_name: manualName } },
-      });
+        manualName,
+      );
       if (authError) throw authError;
-      const userId = authData.user?.id;
       if (!userId) throw new Error('Usuário não criado');
 
-      await supabase.from('profiles').insert({
+      const { error: profErr } = await supabase.from('profiles').insert({
         user_id: userId,
         full_name: manualName,
         email: manualEmail.trim().toLowerCase(),
@@ -158,7 +291,9 @@ const SuperAdminDashboard = () => {
         year: selectedClassroom.year || null,
         is_active: true,
       });
-      await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
+      if (profErr) throw profErr;
+      const { error: roleErr } = await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
+      if (roleErr) throw roleErr;
 
       setLastPassword(password);
       toast({ title: 'Aluno cadastrado!', description: `Senha: ${password}` });
@@ -180,23 +315,24 @@ const SuperAdminDashboard = () => {
     setStaffRegistering(true);
     const password = generatePassword(staffName);
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: staffEmail.trim().toLowerCase(),
+      const { userId, error: authError } = await signUpPreservingAdmin(
+        staffEmail.trim().toLowerCase(),
         password,
-        options: { data: { full_name: staffName } },
-      });
+        staffName,
+      );
       if (authError) throw authError;
-      const userId = authData.user?.id;
       if (!userId) throw new Error('Usuário não criado');
 
-      await supabase.from('profiles').insert({
+      const { error: profErr } = await supabase.from('profiles').insert({
         user_id: userId,
         full_name: staffName,
         email: staffEmail.trim().toLowerCase(),
         school_id: selectedSchoolId,
         is_active: true,
       });
-      await supabase.from('user_roles').insert({ user_id: userId, role: staffRole as any });
+      if (profErr) throw profErr;
+      const { error: roleErr } = await supabase.from('user_roles').insert({ user_id: userId, role: staffRole as any });
+      if (roleErr) throw roleErr;
       if (staffRole === 'professor') {
         await supabase.from('teacher_schools').insert({ user_id: userId, school_id: selectedSchoolId });
       }
@@ -205,7 +341,7 @@ const SuperAdminDashboard = () => {
       toast({ title: `${staffRole === 'professor' ? 'Professor' : 'Gestão'} cadastrado!`, description: `Senha: ${password}` });
       setStaffName('');
       setStaffEmail('');
-      fetchStaff();
+      await fetchStaff();
     } catch (err: any) {
       toast({ title: 'Erro ao cadastrar', description: err.message, variant: 'destructive' });
     }
@@ -235,10 +371,8 @@ const SuperAdminDashboard = () => {
         const email = row.email?.toLowerCase();
         const fullName = row.nome || row.name || row.full_name || '';
         const password = generatePassword(fullName);
-        const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } });
-        if (authError) { errorCount++; continue; }
-        const userId = authData.user?.id;
-        if (!userId) { errorCount++; continue; }
+        const { userId, error: authError } = await signUpPreservingAdmin(email, password, fullName);
+        if (authError || !userId) { errorCount++; continue; }
         await supabase.from('profiles').insert({
           user_id: userId, full_name: fullName, email, school_id: selectedSchoolId,
           classroom_id: selectedClassroom.id,
@@ -279,9 +413,28 @@ const SuperAdminDashboard = () => {
                 <p className="text-xs text-primary-foreground/70">{selectedClassroom.courses?.name || ''} · {selectedClassroom.year}° Ano · {selectedSchool?.name}</p>
               </div>
             </div>
-            <Button variant="ghost" size="sm" className="text-primary-foreground hover:bg-primary-foreground/10" onClick={signOut}>
-              <LogOut className="mr-1 h-4 w-4" /> Sair
-            </Button>
+            <div className="flex gap-2">
+              <Dialog open={renameClassroomOpen} onOpenChange={(open) => { setRenameClassroomOpen(open); if (open) setRenameClassroomValue(selectedClassroom.name); }}>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="text-primary-foreground hover:bg-primary-foreground/10">
+                    <Pencil className="mr-1 h-4 w-4" /> Renomear
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Renomear Sala</DialogTitle>
+                    <DialogDescription>Novo nome para "{selectedClassroom.name}"</DialogDescription>
+                  </DialogHeader>
+                  <Input value={renameClassroomValue} onChange={(e) => setRenameClassroomValue(e.target.value)} />
+                  <DialogFooter>
+                    <Button onClick={handleRenameClassroom}>Salvar</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+              <Button variant="ghost" size="sm" className="text-primary-foreground hover:bg-primary-foreground/10" onClick={signOut}>
+                <LogOut className="mr-1 h-4 w-4" /> Sair
+              </Button>
+            </div>
           </div>
         </header>
 
@@ -388,7 +541,7 @@ const SuperAdminDashboard = () => {
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Adicionar Escola</DialogTitle>
-                    <DialogDescription>Cadastre uma nova EEEP no sistema.</DialogDescription>
+                    <DialogDescription>Cadastre uma nova EEEP. Em seguida cadastre os cursos na aba "Cursos".</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3">
                     <div><Label>Nome da Escola</Label><Input value={newSchoolName} onChange={(e) => setNewSchoolName(e.target.value)} placeholder="EEEP ..." /></div>
@@ -417,13 +570,94 @@ const SuperAdminDashboard = () => {
         </Card>
 
         {selectedSchool && (
-          <Tabs defaultValue="salas" className="w-full">
+          <Tabs defaultValue="cursos" className="w-full">
             <TabsList className="grid w-full grid-cols-4 text-xs">
+              <TabsTrigger value="cursos"><BookOpen className="h-3.5 w-3.5 mr-1" />Cursos</TabsTrigger>
               <TabsTrigger value="salas"><DoorOpen className="h-3.5 w-3.5 mr-1" />Salas</TabsTrigger>
               <TabsTrigger value="equipe"><Users className="h-3.5 w-3.5 mr-1" />Equipe</TabsTrigger>
               <TabsTrigger value="ano"><RotateCcw className="h-3.5 w-3.5 mr-1" />Virada</TabsTrigger>
-              <TabsTrigger value="novos"><GraduationCap className="h-3.5 w-3.5 mr-1" />Novos</TabsTrigger>
             </TabsList>
+
+            {/* Cursos Tab */}
+            <TabsContent value="cursos" className="pt-4 space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <BookOpen className="h-5 w-5 text-primary" /> Cursos de {selectedSchool.name}
+                  </CardTitle>
+                  <CardDescription>Ao criar um curso, são geradas automaticamente 3 salas (1°, 2° e 3° ano). Você pode renomear ou apagar depois.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input
+                      value={newCourseName}
+                      onChange={(e) => setNewCourseName(e.target.value)}
+                      placeholder="Nome do curso (ex: Informática)"
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCourse(); }}
+                    />
+                    <Button onClick={handleCreateCourse} disabled={creatingCourse || !newCourseName.trim()}>
+                      <Plus className="mr-1 h-4 w-4" />{creatingCourse ? 'Criando...' : 'Criar Curso'}
+                    </Button>
+                  </div>
+
+                  {courses.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Nenhum curso cadastrado ainda.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {courses.map((c) => (
+                        <div key={c.id} className="flex items-center justify-between rounded-lg border p-3">
+                          {editCourseId === c.id ? (
+                            <div className="flex-1 flex gap-2">
+                              <Input
+                                value={editCourseName}
+                                onChange={(e) => setEditCourseName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleRenameCourse(c.id); }}
+                                autoFocus
+                              />
+                              <Button size="sm" onClick={() => handleRenameCourse(c.id)}>Salvar</Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setEditCourseId(null); setEditCourseName(''); }}>Cancelar</Button>
+                            </div>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="text-sm font-medium text-foreground">{c.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {classrooms.filter((cl) => cl.course_id === c.id).length} sala(s) vinculada(s)
+                                </p>
+                              </div>
+                              <div className="flex gap-1">
+                                <Button variant="ghost" size="sm" onClick={() => { setEditCourseId(c.id); setEditCourseName(c.name); }}>
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Apagar curso "{c.name}"?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        As salas vinculadas não serão apagadas, apenas desvinculadas do curso.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => handleDeleteCourse(c.id)}>Apagar</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
             {/* Salas Tab */}
             <TabsContent value="salas" className="pt-4 space-y-4">
@@ -431,12 +665,12 @@ const SuperAdminDashboard = () => {
                 <p className="text-sm text-muted-foreground">Salas de <strong>{selectedSchool.name}</strong> — clique para abrir o painel</p>
                 <Dialog open={addClassroomOpen} onOpenChange={setAddClassroomOpen}>
                   <DialogTrigger asChild>
-                    <Button size="sm"><Plus className="mr-1 h-4 w-4" /> Criar Sala</Button>
+                    <Button size="sm"><Plus className="mr-1 h-4 w-4" /> Criar Sala Avulsa</Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
-                      <DialogTitle>Criar Sala</DialogTitle>
-                      <DialogDescription>Adicione uma nova sala para {selectedSchool.name}.</DialogDescription>
+                      <DialogTitle>Criar Sala Avulsa</DialogTitle>
+                      <DialogDescription>Use apenas para salas extras. Para um curso novo, prefira criar pela aba "Cursos" (gera 3 salas automaticamente).</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                       <div>
@@ -446,12 +680,9 @@ const SuperAdminDashboard = () => {
                       <div>
                         <Label>Curso</Label>
                         <Select value={newClassroomCurso} onValueChange={setNewClassroomCurso}>
-                          <SelectTrigger><SelectValue placeholder="Selecionar curso" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder={courses.length ? 'Selecionar curso' : 'Crie cursos primeiro'} /></SelectTrigger>
                           <SelectContent>
-                            {courses.length > 0
-                              ? courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)
-                              : DEFAULT_CURSOS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)
-                            }
+                            {courses.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
@@ -471,7 +702,7 @@ const SuperAdminDashboard = () => {
               </div>
 
               {classrooms.length === 0 ? (
-                <Card><CardContent className="py-8 text-center text-muted-foreground text-sm">Nenhuma sala cadastrada. Crie a primeira sala.</CardContent></Card>
+                <Card><CardContent className="py-8 text-center text-muted-foreground text-sm">Nenhuma sala cadastrada. Comece criando cursos na aba "Cursos".</CardContent></Card>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {classrooms.map((c) => (
@@ -485,7 +716,7 @@ const SuperAdminDashboard = () => {
                   ))}
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">Total: {classrooms.length}/12 salas</p>
+              <p className="text-xs text-muted-foreground">Total: {classrooms.length} sala(s)</p>
             </TabsContent>
 
             {/* Equipe Tab — cadastrar professor/gestão + inativar */}
@@ -504,7 +735,7 @@ const SuperAdminDashboard = () => {
                     </div>
                     <div>
                       <Label>Email *</Label>
-                      <Input type="email" value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)} placeholder="joao@prof.ce.gov.br" />
+                      <Input type="email" value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)} placeholder="joao@email.com" />
                     </div>
                     <div>
                       <Label>Tipo</Label>
@@ -512,7 +743,7 @@ const SuperAdminDashboard = () => {
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="professor">Professor</SelectItem>
-                          <SelectItem value="gestao">Gestão / Direção</SelectItem>
+                          <SelectItem value="gestao">Gestão / Direção / Coordenação</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -610,21 +841,6 @@ const SuperAdminDashboard = () => {
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Novos 1° Ano Tab */}
-            <TabsContent value="novos" className="pt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <GraduationCap className="h-5 w-5 text-primary" /> Importar Novos 1° Ano
-                  </CardTitle>
-                  <CardDescription>CSV: nome, email, genero, turma — Selecione a sala na aba "Salas" para importar diretamente.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">Para importar alunos, acesse a aba <strong>Salas</strong>, clique na sala desejada e use a opção <strong>Importar em Massa</strong>.</p>
                 </CardContent>
               </Card>
             </TabsContent>
