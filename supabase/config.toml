@@ -3,6 +3,8 @@
 project_id = "zoikoxzdjhxlqglxdaik"
 
 [functions.admin-users]
-# The function validates the caller's JWT itself and then authorizes by role.
-# verify_jwt = true (default) also works; leaving default is fine.
-verify_jwt = true
+# Runtime-level verify_jwt is disabled because this project uses the new
+# asymmetric JWT Signing Keys (ES256) which the runtime's built-in verifier
+# does not support yet. We perform JWT validation + super_admin role check
+# ourselves inside the function (verifySuperAdmin).
+verify_jwt = false
