@@ -128,16 +128,43 @@ async def _admin_create_auth_user(email: str, password: str, full_name: str) -> 
         return user_id
 
 
-async def _insert_rows(table: str, rows: list):
+async def _insert_rows(table: str, rows: list, on_conflict: Optional[str] = None):
+    """Insert rows into a Supabase table. If `on_conflict` is provided, performs
+    an UPSERT (merge-duplicates) so we don't fail when Supabase triggers have
+    already created a base row (e.g. default profile on auth.user creation)."""
+    headers = {**SERVICE_HEADERS, "Prefer": "return=representation"}
+    params = ""
+    if on_conflict:
+        headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+        params = f"?on_conflict={on_conflict}"
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.post(
-            f"{SUPABASE_URL}/rest/v1/{table}",
-            headers={**SERVICE_HEADERS, "Prefer": "return=representation"},
+            f"{SUPABASE_URL}/rest/v1/{table}{params}",
+            headers=headers,
             json=rows,
         )
         if r.status_code not in (200, 201):
             raise HTTPException(status_code=400, detail=f"Erro ao inserir em {table}: {r.text}")
         return r.json()
+
+
+async def _update_profile(user_id: str, updates: dict):
+    """Update the profile row for a given user_id (row is expected to exist,
+    auto-created by Supabase trigger on auth.user creation)."""
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/profiles?user_id=eq.{user_id}",
+            headers={**SERVICE_HEADERS, "Prefer": "return=representation"},
+            json=updates,
+        )
+        if r.status_code not in (200, 204):
+            raise HTTPException(status_code=400, detail=f"Erro ao atualizar profile: {r.text}")
+        data = r.json() if r.text else []
+        if not data:
+            # No row to update — trigger didn't fire (schema may have changed).
+            # Fall back to insert.
+            return await _insert_rows("profiles", [{**updates, "user_id": user_id}])
+        return data
 
 
 # ===================== Endpoints =====================
@@ -163,16 +190,19 @@ async def create_staff(body: StaffCreate, authorization: Optional[str] = Header(
 
     user_id = await _admin_create_auth_user(email, password, body.full_name)
     try:
-        await _insert_rows("profiles", [{
-            "user_id": user_id,
+        await _update_profile(user_id, {
             "full_name": body.full_name,
             "email": email,
             "school_id": body.school_id,
             "is_active": True,
-        }])
-        await _insert_rows("user_roles", [{"user_id": user_id, "role": body.role}])
+        })
+        await _insert_rows("user_roles", [{"user_id": user_id, "role": body.role}], on_conflict="user_id,role")
         if body.role == "professor":
-            await _insert_rows("teacher_schools", [{"user_id": user_id, "school_id": body.school_id}])
+            await _insert_rows(
+                "teacher_schools",
+                [{"user_id": user_id, "school_id": body.school_id}],
+                on_conflict="user_id,school_id",
+            )
     except HTTPException:
         # Best-effort rollback on auth user creation
         async with httpx.AsyncClient(timeout=15) as client:
@@ -195,8 +225,7 @@ async def create_student(body: StudentCreate, authorization: Optional[str] = Hea
 
     user_id = await _admin_create_auth_user(email, password, body.full_name)
     try:
-        await _insert_rows("profiles", [{
-            "user_id": user_id,
+        await _update_profile(user_id, {
             "full_name": body.full_name,
             "email": email,
             "school_id": body.school_id,
@@ -204,8 +233,8 @@ async def create_student(body: StudentCreate, authorization: Optional[str] = Hea
             "gender": body.gender,
             "year": body.year,
             "is_active": True,
-        }])
-        await _insert_rows("user_roles", [{"user_id": user_id, "role": "aluno"}])
+        })
+        await _insert_rows("user_roles", [{"user_id": user_id, "role": "aluno"}], on_conflict="user_id,role")
     except HTTPException as he:
         logger.error(f"create_student rollback for {email}: {he.detail}")
         async with httpx.AsyncClient(timeout=15) as client:
@@ -235,8 +264,7 @@ async def bulk_students(body: BulkStudentsCreate, authorization: Optional[str] =
             password = generate_password(full_name)
             user_id = await _admin_create_auth_user(email, password, full_name)
             try:
-                await _insert_rows("profiles", [{
-                    "user_id": user_id,
+                await _update_profile(user_id, {
                     "full_name": full_name,
                     "email": email,
                     "school_id": body.school_id,
@@ -244,8 +272,8 @@ async def bulk_students(body: BulkStudentsCreate, authorization: Optional[str] =
                     "gender": gender,
                     "year": body.year,
                     "is_active": True,
-                }])
-                await _insert_rows("user_roles", [{"user_id": user_id, "role": "aluno"}])
+                })
+                await _insert_rows("user_roles", [{"user_id": user_id, "role": "aluno"}], on_conflict="user_id,role")
                 results["success"].append({"email": email, "password": password})
             except HTTPException as he:
                 async with httpx.AsyncClient(timeout=15) as client:

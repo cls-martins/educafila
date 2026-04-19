@@ -125,36 +125,60 @@ const SuperAdminDashboard = () => {
   };
 
   const fetchStaff = async () => {
-    // !inner forces the join to actually filter profiles by user_roles.role
-    const { data, error } = await supabase
+    // profiles and user_roles have no direct FK between them (both join via auth.users.id),
+    // so PostgREST embed syntax doesn't work. We fetch separately and merge client-side.
+    const { data: roleRows, error: rolesError } = await supabase
+      .from('user_roles')
+      .select('user_id, role')
+      .in('role', ['professor', 'gestao']);
+    if (rolesError) { console.error('fetchStaff roles error', rolesError); setStaffList([]); return; }
+    const staffIds = (roleRows || []).map((r: any) => r.user_id);
+    if (!staffIds.length) { setStaffList([]); return; }
+
+    const { data: profs, error: profError } = await supabase
       .from('profiles')
-      .select('*, user_roles!inner(role)')
+      .select('*')
       .eq('school_id', selectedSchoolId)
-      .in('user_roles.role', ['professor', 'gestao'])
+      .in('user_id', staffIds)
       .order('full_name');
-    if (error) {
-      console.error('fetchStaff error', error);
-      setStaffList([]);
-      return;
-    }
-    setStaffList(data || []);
+    if (profError) { console.error('fetchStaff profiles error', profError); setStaffList([]); return; }
+
+    const rolesByUser: Record<string, string[]> = {};
+    (roleRows || []).forEach((r: any) => {
+      rolesByUser[r.user_id] = rolesByUser[r.user_id] || [];
+      rolesByUser[r.user_id].push(r.role);
+    });
+    const enriched = (profs || []).map((p: any) => ({
+      ...p,
+      user_roles: (rolesByUser[p.user_id] || []).map((role) => ({ role })),
+    }));
+    setStaffList(enriched);
   };
 
   const fetchStudents = async () => {
     if (!selectedClassroom?.id) return;
     setStudentsLoading(true);
-    const { data, error } = await supabase
+    // Same rationale: fetch profiles then filter to those with role=aluno
+    const { data: profs, error: profError } = await supabase
       .from('profiles')
-      .select('*, user_roles!inner(role)')
+      .select('*')
       .eq('classroom_id', selectedClassroom.id)
-      .eq('user_roles.role', 'aluno')
       .order('full_name');
-    if (error) {
-      console.error('fetchStudents error', error);
+    if (profError) {
+      console.error('fetchStudents profiles error', profError);
       setStudentsList([]);
-    } else {
-      setStudentsList(data || []);
+      setStudentsLoading(false);
+      return;
     }
+    const ids = (profs || []).map((p: any) => p.user_id);
+    if (!ids.length) { setStudentsList([]); setStudentsLoading(false); return; }
+    const { data: roles } = await supabase
+      .from('user_roles')
+      .select('user_id, role')
+      .in('user_id', ids)
+      .eq('role', 'aluno');
+    const alunoIds = new Set((roles || []).map((r: any) => r.user_id));
+    setStudentsList((profs || []).filter((p: any) => alunoIds.has(p.user_id)));
     setStudentsLoading(false);
   };
 
@@ -864,7 +888,7 @@ const SuperAdminDashboard = () => {
                               {!s.is_active && <Badge variant="outline" className="text-[10px] text-destructive border-destructive">Inativo</Badge>}
                             </div>
                           </div>
-                          {s.is_active && (
+                          {s.is_active ? (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
@@ -882,6 +906,14 @@ const SuperAdminDashboard = () => {
                                 </AlertDialogFooter>
                               </AlertDialogContent>
                             </AlertDialog>
+                          ) : (
+                            <Button variant="ghost" size="sm" onClick={async () => {
+                              await supabase.from('profiles').update({ is_active: true }).eq('user_id', s.user_id);
+                              toast({ title: 'Usuário reativado' });
+                              fetchStaff();
+                            }}>
+                              Reativar
+                            </Button>
                           )}
                         </div>
                       ))}
