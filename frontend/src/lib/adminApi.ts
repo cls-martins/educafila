@@ -12,17 +12,21 @@ async function invokeAdmin<T = any>(action: string, payload: Record<string, unkn
     body: { action, ...payload },
   });
   if (error) {
-    // Supabase FunctionsHttpError exposes `context.response` with the body.
+    // In supabase-js v2, FunctionsHttpError.context IS the Response object.
     let detail = error.message || `Erro ao chamar ${action}`;
     try {
       const ctx: any = (error as any).context;
-      if (ctx?.response) {
-        const text = await ctx.response.clone().text();
-        try {
-          const j = JSON.parse(text);
-          detail = j.detail || j.message || text || detail;
-        } catch {
-          if (text) detail = text;
+      // ctx can be a Response (FunctionsHttpError) or {response: Response}
+      const res: Response | undefined = ctx instanceof Response ? ctx : ctx?.response;
+      if (res && typeof res.clone === 'function') {
+        const text = await res.clone().text();
+        if (text) {
+          try {
+            const j = JSON.parse(text);
+            detail = j.detail || j.message || j.error || text;
+          } catch {
+            detail = text;
+          }
         }
       }
     } catch { /* ignore */ }

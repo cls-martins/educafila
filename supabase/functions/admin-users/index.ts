@@ -264,7 +264,18 @@ async function deleteUser(body: any) {
   }
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) {
-    throw { status: 400, detail: `Falha ao apagar auth user: ${error.message}` };
+    // Tolerate "user_not_found" — it's fine if the auth row was already gone.
+    const msg = (error.message || "").toLowerCase();
+    const status = (error as any).status;
+    const isNotFound =
+      status === 404 ||
+      msg.includes("not found") ||
+      msg.includes("user_not_found");
+    if (!isNotFound) {
+      console.error(`auth.admin.deleteUser(${userId}) failed:`, error);
+      throw { status: 400, detail: `Falha ao apagar auth user: ${error.message}` };
+    }
+    console.warn(`auth user ${userId} already gone, skipping`);
   }
   return { ok: true };
 }
