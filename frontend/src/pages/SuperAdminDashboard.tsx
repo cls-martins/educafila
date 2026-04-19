@@ -96,10 +96,18 @@ const SuperAdminDashboard = () => {
   // Staff list (professors/gestão)
   const [staffList, setStaffList] = useState<any[]>([]);
 
+  // Students list inside the opened classroom
+  const [studentsList, setStudentsList] = useState<any[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+
   useEffect(() => { fetchSchools(); }, []);
   useEffect(() => {
     if (selectedSchoolId) { fetchClassrooms(); fetchCourses(); fetchStaff(); }
   }, [selectedSchoolId]);
+  useEffect(() => {
+    if (selectedClassroom?.id) fetchStudents();
+    else setStudentsList([]);
+  }, [selectedClassroom?.id]);
 
   const fetchSchools = async () => {
     const { data } = await supabase.from('schools').select('*').order('name');
@@ -130,6 +138,36 @@ const SuperAdminDashboard = () => {
       return;
     }
     setStaffList(data || []);
+  };
+
+  const fetchStudents = async () => {
+    if (!selectedClassroom?.id) return;
+    setStudentsLoading(true);
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*, user_roles!inner(role)')
+      .eq('classroom_id', selectedClassroom.id)
+      .eq('user_roles.role', 'aluno')
+      .order('full_name');
+    if (error) {
+      console.error('fetchStudents error', error);
+      setStudentsList([]);
+    } else {
+      setStudentsList(data || []);
+    }
+    setStudentsLoading(false);
+  };
+
+  const handleInactivateStudent = async (userId: string) => {
+    await supabase.from('profiles').update({ is_active: false }).eq('user_id', userId);
+    toast({ title: 'Aluno inativado' });
+    fetchStudents();
+  };
+
+  const handleReactivateStudent = async (userId: string) => {
+    await supabase.from('profiles').update({ is_active: true }).eq('user_id', userId);
+    toast({ title: 'Aluno reativado' });
+    fetchStudents();
   };
 
   const selectedSchool = schools.find((s) => s.id === selectedSchoolId);
@@ -283,6 +321,7 @@ const SuperAdminDashboard = () => {
       setManualName('');
       setManualEmail('');
       setManualGender('');
+      await fetchStudents();
     } catch (err: any) {
       toast({ title: 'Erro ao cadastrar', description: err.message, variant: 'destructive' });
     }
@@ -357,6 +396,7 @@ const SuperAdminDashboard = () => {
         title: 'Importação concluída',
         description: `${result.success.length} importados, ${result.errors.length} erros.`,
       });
+      await fetchStudents();
     } catch (err: any) {
       toast({ title: 'Erro na importação', description: err.message, variant: 'destructive' });
     }
@@ -415,11 +455,72 @@ const SuperAdminDashboard = () => {
         </header>
 
         <main className="container mx-auto px-4 py-6 space-y-6">
-          <Tabs defaultValue="cadastrar" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="cadastrar"><UserPlus className="h-3.5 w-3.5 mr-1" />Cadastrar Aluno</TabsTrigger>
-              <TabsTrigger value="importar"><Upload className="h-3.5 w-3.5 mr-1" />Importar em Massa</TabsTrigger>
+          <Tabs defaultValue="alunos" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="alunos"><Users className="h-3.5 w-3.5 mr-1" />Alunos</TabsTrigger>
+              <TabsTrigger value="cadastrar"><UserPlus className="h-3.5 w-3.5 mr-1" />Cadastrar</TabsTrigger>
+              <TabsTrigger value="importar"><Upload className="h-3.5 w-3.5 mr-1" />Importar CSV</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="alunos" className="pt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Users className="h-5 w-5 text-primary" /> Alunos da Sala
+                  </CardTitle>
+                  <CardDescription>
+                    {studentsLoading ? 'Carregando...' : `${studentsList.length} aluno(s) nesta sala.`}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!studentsLoading && studentsList.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6">
+                      Nenhum aluno cadastrado nesta sala ainda. Use as abas "Cadastrar" ou "Importar CSV".
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {studentsList.map((s) => (
+                        <div key={s.id} className="flex items-center justify-between rounded-lg border p-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground truncate">{s.full_name}</p>
+                            <p className="text-xs text-muted-foreground truncate">{s.email}</p>
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              {s.gender && <Badge variant="outline" className="text-[10px]">{s.gender}</Badge>}
+                              {!s.is_active && <Badge variant="outline" className="text-[10px] text-destructive border-destructive">Inativo</Badge>}
+                            </div>
+                          </div>
+                          <div className="flex gap-1 shrink-0">
+                            {s.is_active ? (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
+                                    <UserX className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Inativar {s.full_name}?</AlertDialogTitle>
+                                    <AlertDialogDescription>O aluno não conseguirá mais acessar o sistema.</AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => handleInactivateStudent(s.user_id)}>Inativar</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            ) : (
+                              <Button variant="ghost" size="sm" onClick={() => handleReactivateStudent(s.user_id)}>
+                                Reativar
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="cadastrar" className="pt-4">
               <Card>

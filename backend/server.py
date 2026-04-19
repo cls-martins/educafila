@@ -188,6 +188,7 @@ async def create_staff(body: StaffCreate, authorization: Optional[str] = Header(
 async def create_student(body: StudentCreate, authorization: Optional[str] = Header(None)):
     """Create a single student user, fully provisioned."""
     await verify_super_admin(authorization)
+    logger.info(f"create_student: email={body.email} school={body.school_id} classroom={body.classroom_id}")
 
     password = body.password or generate_password(body.full_name)
     email = body.email.lower().strip()
@@ -205,13 +206,15 @@ async def create_student(body: StudentCreate, authorization: Optional[str] = Hea
             "is_active": True,
         }])
         await _insert_rows("user_roles", [{"user_id": user_id, "role": "aluno"}])
-    except HTTPException:
+    except HTTPException as he:
+        logger.error(f"create_student rollback for {email}: {he.detail}")
         async with httpx.AsyncClient(timeout=15) as client:
             await client.delete(
                 f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}",
                 headers=SERVICE_HEADERS,
             )
         raise
+    logger.info(f"create_student OK: {email} -> user_id {user_id}")
     return {"user_id": user_id, "password": password, "email": email}
 
 
