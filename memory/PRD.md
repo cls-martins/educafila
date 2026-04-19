@@ -37,11 +37,16 @@ super_admin, gestão, professor, aluno.
   `supabase.functions.invoke('admin-users', { body: { action, ... } })`.
 - ✅ Guia de deploy: `/app/supabase/functions/admin-users/DEPLOY.md`.
 
-## Deploy pendente pelo usuário (P0)
-1. Abrir Dashboard Supabase → Edge Functions → Create `admin-users`.
-2. Colar o código de `/app/supabase/functions/admin-users/index.ts`.
-3. Adicionar secret `SUPABASE_SERVICE_ROLE_KEY` (Settings → API).
-4. Testar criar/deletar aluno no SuperAdminDashboard em produção.
+## Deploy da Edge Function — CONCLUÍDO ✅
+- Deploy feito via Supabase CLI em 2026-02:
+  `https://zoikoxzdjhxlqglxdaik.supabase.co/functions/v1/admin-users`
+- Secrets: `SUPABASE_SERVICE_ROLE_KEY` é injetado automaticamente pelo
+  Supabase em toda Edge Function (não requer set manual).
+- Smoke test: função retorna 401 com token inválido (esperado).
+
+## Próximo passo (P0)
+- Validação e2e pelo usuário: criar aluno/professor e deletar no
+  SuperAdminDashboard em produção (Vercel).
 
 ## Backlog (P1)
 - Remover/arquivar `/app/backend` (FastAPI) após confirmar Edge Function ok.
