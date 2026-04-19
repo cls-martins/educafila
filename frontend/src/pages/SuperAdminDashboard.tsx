@@ -12,15 +12,14 @@ import { BookOpen, RotateCcw, LogOut, Plus, School, Search, UserPlus, DoorOpen, 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { adminCreateStaff, adminCreateStudent, adminBulkStudents } from '@/lib/adminApi';
 
 const ANOS = [1, 2, 3];
 
 /**
- * Executes an auth.signUp() while preserving the currently-logged-in admin
- * session. Supabase's signUp() automatically switches the client session to
- * the newly created user, which (a) logs the admin out and (b) can break
- * subsequent RLS-protected inserts. We capture the admin session before
- * signUp and restore it immediately after.
+ * Lightweight helper kept for legacy flows (fallback only). Staff / student
+ * creation now goes through the protected backend endpoint which uses
+ * service_role and never hijacks the admin's browser session.
  */
 async function signUpPreservingAdmin(
   email: string,
@@ -33,7 +32,6 @@ async function signUpPreservingAdmin(
     password,
     options: { data: { full_name: fullName } },
   });
-  // Always try to restore admin session, even if signUp errored
   if (adminSession) {
     try {
       await supabase.auth.setSession({
@@ -271,32 +269,17 @@ const SuperAdminDashboard = () => {
       return;
     }
     setRegistering(true);
-    const password = generatePassword(manualName);
     try {
-      const { userId, error: authError } = await signUpPreservingAdmin(
-        manualEmail.trim().toLowerCase(),
-        password,
-        manualName,
-      );
-      if (authError) throw authError;
-      if (!userId) throw new Error('Usuário não criado');
-
-      const { error: profErr } = await supabase.from('profiles').insert({
-        user_id: userId,
+      const result = await adminCreateStudent({
         full_name: manualName,
         email: manualEmail.trim().toLowerCase(),
         school_id: selectedSchoolId,
         classroom_id: selectedClassroom.id,
-        gender: (manualGender || null) as 'masculino' | 'feminino' | 'outro' | null,
+        gender: manualGender || null,
         year: selectedClassroom.year || null,
-        is_active: true,
       });
-      if (profErr) throw profErr;
-      const { error: roleErr } = await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
-      if (roleErr) throw roleErr;
-
-      setLastPassword(password);
-      toast({ title: 'Aluno cadastrado!', description: `Senha: ${password}` });
+      setLastPassword(result.password);
+      toast({ title: 'Aluno cadastrado!', description: `Senha: ${result.password}` });
       setManualName('');
       setManualEmail('');
       setManualGender('');
@@ -313,32 +296,18 @@ const SuperAdminDashboard = () => {
       return;
     }
     setStaffRegistering(true);
-    const password = generatePassword(staffName);
     try {
-      const { userId, error: authError } = await signUpPreservingAdmin(
-        staffEmail.trim().toLowerCase(),
-        password,
-        staffName,
-      );
-      if (authError) throw authError;
-      if (!userId) throw new Error('Usuário não criado');
-
-      const { error: profErr } = await supabase.from('profiles').insert({
-        user_id: userId,
+      const result = await adminCreateStaff({
         full_name: staffName,
         email: staffEmail.trim().toLowerCase(),
         school_id: selectedSchoolId,
-        is_active: true,
+        role: staffRole,
       });
-      if (profErr) throw profErr;
-      const { error: roleErr } = await supabase.from('user_roles').insert({ user_id: userId, role: staffRole as any });
-      if (roleErr) throw roleErr;
-      if (staffRole === 'professor') {
-        await supabase.from('teacher_schools').insert({ user_id: userId, school_id: selectedSchoolId });
-      }
-
-      setLastStaffPassword(password);
-      toast({ title: `${staffRole === 'professor' ? 'Professor' : 'Gestão'} cadastrado!`, description: `Senha: ${password}` });
+      setLastStaffPassword(result.password);
+      toast({
+        title: `${staffRole === 'professor' ? 'Professor' : 'Gestão'} cadastrado!`,
+        description: `Senha: ${result.password}`,
+      });
       setStaffName('');
       setStaffEmail('');
       await fetchStaff();
@@ -359,31 +328,38 @@ const SuperAdminDashboard = () => {
   const handleCSVUploadClassroom = async (file: File) => {
     if (!selectedSchoolId || !selectedClassroom) return;
     setUploading(true);
-    const text = await file.text();
-    const lines = text.split('\n').filter((l) => l.trim());
-    const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-    let successCount = 0; let errorCount = 0;
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map((v) => v.trim());
-      const row: Record<string, string> = {};
-      headers.forEach((h, idx) => (row[h] = values[idx] || ''));
-      try {
-        const email = row.email?.toLowerCase();
-        const fullName = row.nome || row.name || row.full_name || '';
-        const password = generatePassword(fullName);
-        const { userId, error: authError } = await signUpPreservingAdmin(email, password, fullName);
-        if (authError || !userId) { errorCount++; continue; }
-        await supabase.from('profiles').insert({
-          user_id: userId, full_name: fullName, email, school_id: selectedSchoolId,
-          classroom_id: selectedClassroom.id,
-          gender: (row.genero || row.gender || null) as any,
-          year: selectedClassroom.year || null, is_active: true,
-        });
-        await supabase.from('user_roles').insert({ user_id: userId, role: 'aluno' as const });
-        successCount++;
-      } catch { errorCount++; }
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter((l) => l.trim());
+      const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+      const students: Array<{ full_name: string; email: string; gender?: string | null }> = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map((v) => v.trim());
+        const row: Record<string, string> = {};
+        headers.forEach((h, idx) => (row[h] = values[idx] || ''));
+        const fullName = (row.nome || row.name || row.full_name || '').trim();
+        const email = (row.email || '').trim().toLowerCase();
+        if (!fullName || !email) continue;
+        students.push({ full_name: fullName, email, gender: row.genero || row.gender || null });
+      }
+      if (!students.length) {
+        toast({ title: 'CSV vazio ou inválido', variant: 'destructive' });
+        setUploading(false);
+        return;
+      }
+      const result = await adminBulkStudents({
+        school_id: selectedSchoolId,
+        classroom_id: selectedClassroom.id,
+        year: selectedClassroom.year || null,
+        students,
+      });
+      toast({
+        title: 'Importação concluída',
+        description: `${result.success.length} importados, ${result.errors.length} erros.`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro na importação', description: err.message, variant: 'destructive' });
     }
-    toast({ title: 'Importação concluída', description: `${successCount} importados, ${errorCount} erros.` });
     setUploading(false);
   };
 
