@@ -1,32 +1,34 @@
 import { supabase } from '@/integrations/supabase/client';
 
-const BACKEND_URL = (import.meta.env.REACT_APP_BACKEND_URL as string) || '';
+// All admin operations are now served by a single Supabase Edge Function
+// named `admin-users` (see /app/supabase/functions/admin-users/index.ts).
+// The function validates the caller's JWT and super_admin role server-side,
+// then performs the privileged operation using the service_role key.
 
-async function authHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-  if (!token) throw new Error('Sessão expirada. Faça login novamente.');
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-  };
-}
+const FUNCTION_NAME = 'admin-users';
 
-async function postJson<T = any>(path: string, body: unknown): Promise<T> {
-  const headers = await authHeaders();
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+async function invokeAdmin<T = any>(action: string, payload: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke(FUNCTION_NAME, {
+    body: { action, ...payload },
   });
-  const text = await res.text();
-  let json: any = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
-  if (!res.ok) {
-    const msg = (json && (json.detail || json.message)) || text || `Erro ${res.status}`;
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  if (error) {
+    // Supabase FunctionsHttpError exposes `context.response` with the body.
+    let detail = error.message || `Erro ao chamar ${action}`;
+    try {
+      const ctx: any = (error as any).context;
+      if (ctx?.response) {
+        const text = await ctx.response.clone().text();
+        try {
+          const j = JSON.parse(text);
+          detail = j.detail || j.message || text || detail;
+        } catch {
+          if (text) detail = text;
+        }
+      }
+    } catch { /* ignore */ }
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
-  return json as T;
+  return data as T;
 }
 
 export type StaffRole = 'professor' | 'gestao';
@@ -37,8 +39,8 @@ export async function adminCreateStaff(payload: {
   school_id: string;
   role: StaffRole;
 }) {
-  return postJson<{ user_id: string; password: string; email: string }>(
-    '/api/admin/staff',
+  return invokeAdmin<{ user_id: string; password: string; email: string }>(
+    'create_staff',
     payload,
   );
 }
@@ -51,8 +53,8 @@ export async function adminCreateStudent(payload: {
   gender?: string | null;
   year?: number | null;
 }) {
-  return postJson<{ user_id: string; password: string; email: string }>(
-    '/api/admin/student',
+  return invokeAdmin<{ user_id: string; password: string; email: string }>(
+    'create_student',
     payload,
   );
 }
@@ -63,24 +65,12 @@ export async function adminBulkStudents(payload: {
   year?: number | null;
   students: Array<{ full_name: string; email: string; gender?: string | null }>;
 }) {
-  return postJson<{
+  return invokeAdmin<{
     success: Array<{ email: string; password: string }>;
     errors: Array<{ row: number; email?: string; reason: string }>;
-  }>('/api/admin/students/bulk', payload);
+  }>('bulk_students', payload);
 }
 
 export async function adminDeleteUser(userId: string): Promise<{ ok: boolean }> {
-  const headers = await authHeaders();
-  const res = await fetch(`${BACKEND_URL}/api/admin/user/${userId}`, {
-    method: 'DELETE',
-    headers,
-  });
-  const text = await res.text();
-  let json: any = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* not json */ }
-  if (!res.ok) {
-    const msg = (json && (json.detail || json.message)) || text || `Erro ${res.status}`;
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
-  }
-  return json;
+  return invokeAdmin<{ ok: boolean }>('delete_user', { user_id: userId });
 }

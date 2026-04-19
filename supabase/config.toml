@@ -1,0 +1,8 @@
+# Supabase project config for Edge Functions deployment.
+# Ref: https://supabase.com/docs/guides/cli/config
+project_id = "zoikoxzdjhxlqglxdaik"
+
+[functions.admin-users]
+# The function validates the caller's JWT itself and then authorizes by role.
+# verify_jwt = true (default) also works; leaving default is fine.
+verify_jwt = true
