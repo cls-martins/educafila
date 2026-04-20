@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { LogOut, AlertTriangle, Users, Clock } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScheduleManager } from '@/components/ScheduleManager';
 
 const ManagementDashboard = () => {
   const { profile, signOut, activeSchoolId } = useAuth();
@@ -43,6 +45,12 @@ const ManagementDashboard = () => {
         </div>
       </header>
       <main className="container mx-auto px-4 py-6 space-y-6">
+        <Tabs defaultValue="overview" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="overview" data-testid="tab-overview">Visão das Salas</TabsTrigger>
+            <TabsTrigger value="schedules" data-testid="tab-schedules">Horários da Fila</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview" className="space-y-6">
         {alerts.length > 0 && (
           <Card className="border-destructive">
             <CardHeader><CardTitle className="flex items-center gap-2 text-destructive"><AlertTriangle className="h-5 w-5" /> Alertas de Tempo Excedido</CardTitle></CardHeader>
@@ -74,6 +82,15 @@ const ManagementDashboard = () => {
             );
           })}
         </div>
+          </TabsContent>
+          <TabsContent value="schedules">
+            {activeSchoolId ? (
+              <ScheduleManager schoolId={activeSchoolId} />
+            ) : (
+              <p className="text-sm text-muted-foreground">Nenhuma escola ativa.</p>
+            )}
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

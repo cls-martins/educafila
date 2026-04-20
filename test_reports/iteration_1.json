@@ -1,0 +1,65 @@
+{
+  "summary": "Frontend-only review of EducaFila student flow. Login, dashboard redesign, student menu (Perfil/Ajuda/App/Modo Escuro/Sair), ProfileDialog open, HelpDialog, AppDownloadDialog, and dark-mode toggle all render/work. However a CRITICAL Supabase schema bug blocks the queue feature entirely: queue_entries -> profiles and swap_requests -> profiles foreign-key relationships are missing in the public schema cache, so the embedded selects used by StudentDashboard fail with PGRST200 (HTTP 400). This makes 'Entrar na Fila' appear broken (row is possibly inserted but fetchQueue always errors, so UI never refreshes and the list stays empty). Could not test SuperAdmin/Management Horarios and Teacher penalty flows because no super_admin password and no teacher account were available.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /rest/v1/queue_entries?select=*,profiles(full_name,display_name_tokens,name_color)",
+        "issue": "PGRST200: 'Could not find a relationship between queue_entries and profiles in the schema cache'. Returns 400. StudentDashboard.fetchQueue fails every time, so queue list is always empty and 'Entrar na Fila' has no visible effect even when the insert succeeds.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /rest/v1/swap_requests?select=*,profiles!swap_requests_requester_id_fkey(full_name)",
+        "issue": "PGRST200: FK hint 'swap_requests_requester_id_fkey' does not exist between swap_requests and profiles. fetchIncomingSwaps returns 400; incoming swap dialog never opens for any target.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "StudentDashboard / enter-queue-btn",
+        "issue": "Clicking 'Entrar na Fila' does not put the student into the queue in the UI (no toast, no position card, queue list stays '0 na fila'). Root cause is the backend PGRST200 above – fetchQueue cannot re-read the list. Additionally, enterQueue() silently ignores the insert error (handleJoin only toasts if enterQueue itself errors, not if subsequent fetchQueue fails), so the user gets zero feedback.",
+        "selector": "[data-testid=enter-queue-btn]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Queue realtime + embed",
+        "issue": "StudentDashboard selects queue_entries with nested profiles(full_name, display_name_tokens, name_color) but profiles FK is not exposed to PostgREST. Either add FK (queue_entries.user_id -> profiles.user_id with profiles.user_id UNIQUE) or change the client to fetch profiles in a separate query and join in JS.",
+        "affected_selectors": ["[data-testid=enter-queue-btn]", "[data-testid^=queue-item-]"]
+      },
+      {
+        "flow": "Incoming swap requests",
+        "issue": "fetchIncomingSwaps uses a named FK hint that PostgREST cannot find. Same fix pattern – add the FK or split the query.",
+        "affected_selectors": ["[data-testid=swap-queue-btn]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Create SQL FK so PostgREST can embed profiles from queue_entries and swap_requests (e.g. ALTER TABLE queue_entries ADD CONSTRAINT queue_entries_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(user_id); after ensuring profiles.user_id is UNIQUE). Same for swap_requests.requester_id and swap_requests.target_id. Then run `notify pgrst 'reload schema'` or let Supabase auto-reload.",
+    "Alternative fix: in StudentDashboard.fetchQueue / fetchIncomingSwaps, drop the embedded profiles() select and fetch profiles in a second query keyed by user_id list.",
+    "Surface errors from fetchQueue (and enterQueue) with a toast so the user sees what went wrong; today failures are swallowed.",
+    "Provide a super_admin password (or seed a teacher test account) so SuperAdmin Horarios tab, ManagementDashboard Horarios tab, and TeacherDashboard penalty flow can actually be verified end-to-end."
+  ],
+  "critical_code_review_comments": [
+    "StudentDashboard.fetchQueue: on supabase error the function returns silently – no toast, no state reset. Always handle/log error so the join/queue UX isn't frozen.",
+    "lib/queue.enterQueue uses a 'read last position then insert' pattern without a transaction; under concurrency two users can get the same position. Consider a DB-side trigger or RPC that computes position atomically.",
+    "ThemeContext.setTheme fires supabase update but does not await/error-handle the promise; if RLS blocks it the user still gets local change but profile.theme drifts.",
+    "ProfileDialog: when the user edits the native color picker, customColor is set but color is not – preview reads `customColor || color` which is fine, but the preset swatches don't show selection ring once a custom color is chosen (minor UX)."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only review)",
+    "frontend": "~65% – UI renders fine; queue feature broken due to backend FK schema issue"
+  },
+  "test_credentials": "Student carlos.martins128@aluno.ce.gov.br / carlos.daniel.candido.martins@edu2026 worked. Super admin password was not supplied so Horarios/SuperAdmin tabs were not exercised. No teacher account available.",
+  "seed_data_creation": "None.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "If the FK fix is deployed: retest by logging in as carlos.martins128@aluno.ce.gov.br, click [data-testid=enter-queue-btn], verify that [data-testid=leave-queue-btn] and [data-testid=queue-item-1] appear without any 400 from /rest/v1/queue_entries?select=*,profiles(...). Also retest swap dialog. If a super_admin password is provided, test SuperAdminDashboard Horarios tab (schedule-add-btn, schedule-weekday-select, schedule-start-input, schedule-end-input, schedule-delete-{id}) and teacher penalty flow (penalty-badge-{position} showing on StudentDashboard after teacher clicks AlertTriangle).",
+  "rca of the issue": "StudentDashboard runs `supabase.from('queue_entries').select('*, profiles(full_name, display_name_tokens, name_color)')`. PostgREST needs a FK from queue_entries.user_id -> profiles.* to resolve the embed. The profiles table likely has its own FK to auth.users, but there is no FK from queue_entries to profiles, so PostgREST returns PGRST200/400. Same root cause for swap_requests. Mitigation: (a) add the explicit FK, making profiles.user_id UNIQUE first, or (b) stop using embedded select and fetch profiles in a second query by user_id IN (...)."
+}

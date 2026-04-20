@@ -16,6 +16,9 @@ type UserProfile = {
   year: number | null;
   avatar_url: string | null;
   is_active: boolean;
+  display_name_tokens: string[] | null;
+  name_color: string | null;
+  theme: 'light' | 'dark' | null;
 };
 
 type AuthContextType = {
@@ -28,6 +31,7 @@ type AuthContextType = {
   setActiveSchoolId: (id: string) => void;
   signOut: () => Promise<void>;
   hasRole: (role: UserRole) => boolean;
+  refreshProfile: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -128,11 +132,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const hasRole = (role: UserRole) => roles.includes(role);
 
+  const refreshProfile = async () => {
+    if (!user?.id) return;
+    await fetchUserData(user.id);
+  };
+
   return (
     <AuthContext.Provider value={{
       session, user, profile, roles, loading,
       activeSchoolId, setActiveSchoolId,
-      signOut, hasRole,
+      signOut, hasRole, refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>

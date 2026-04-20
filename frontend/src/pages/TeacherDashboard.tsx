@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LogOut, AlertTriangle, Trash2, Clock, Users, ArrowUp, ArrowDown, Timer } from 'lucide-react';
+import { applyPenalty } from '@/lib/queue';
 
 const TeacherDashboard = () => {
   const { user, profile, signOut, activeSchoolId, setActiveSchoolId } = useAuth();
@@ -49,12 +50,10 @@ const TeacherDashboard = () => {
   const removeFromQueue = async (entryId: string) => { await supabase.from('queue_entries').delete().eq('id', entryId); toast({ title: 'Aluno removido da fila' }); fetchQueue(); };
 
   const handleApplyPenalty = async (userId: string, userName: string) => {
-    if (!activeSchoolId) return;
-    const { data: existing } = await supabase.from('penalties').select('id').eq('user_id', userId).eq('school_id', activeSchoolId);
-    const infractions = (existing?.length || 0) + 1;
-    const percent = infractions === 1 ? 30 : 30 + (infractions - 1) * 10;
-    await supabase.from('penalties').insert({ school_id: activeSchoolId, user_id: userId, classroom_id: selectedClassroom, reason: 'Penalidade aplicada pelo professor', infraction_number: infractions, penalty_percent: Math.min(percent, 100), applied_by: user?.id });
-    toast({ title: 'Penalidade aplicada', description: `${userName}: ${percent}% de recuo na fila` });
+    if (!activeSchoolId || !selectedClassroom) return;
+    await applyPenalty(userId, selectedClassroom, activeSchoolId, 'Penalidade aplicada pelo professor');
+    toast({ title: 'Penalidade aplicada', description: `${userName} foi recuado na fila.` });
+    fetchQueue();
   };
 
   const movePosition = async (entryId: string, direction: 'up' | 'down') => {
@@ -101,7 +100,7 @@ const TeacherDashboard = () => {
                           <div className="flex items-center gap-3">
                             <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${exceeded ? 'bg-destructive/20 text-destructive' : 'bg-primary/10 text-primary'}`}>{entry.position}</span>
                             <div>
-                              <p className="text-sm font-medium text-foreground">{(entry.profiles as any)?.full_name}</p>
+                              <p className="text-sm font-medium text-foreground">{(entry.profiles as any)?.full_name}{entry.penalty_count > 0 && (<span className="ml-2 inline-flex items-center gap-0.5 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive"><AlertTriangle className="h-3 w-3" />{entry.penalty_count}</span>)}</p>
                               <p className="text-xs text-muted-foreground">{entry.status === 'in_bathroom' ? <span className={exceeded ? 'text-destructive font-semibold' : 'text-warning'}>🚻 {formatTime(bathroomSec!)}</span> : 'Aguardando'}</p>
                             </div>
                           </div>

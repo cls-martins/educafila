@@ -160,6 +160,12 @@ export async function applyPenalty(
   const positionsToMove = Math.ceil(totalInQueue * (penaltyPercent / 100));
   const newPosition = Math.min(myEntry.position + positionsToMove, totalInQueue);
 
+  // Bump the display counter on the queue entry (best-effort).
+  await supabase
+    .from('queue_entries')
+    .update({ penalty_count: (infractionNumber) as any })
+    .eq('id', myEntry.id);
+
   if (newPosition <= myEntry.position) return;
 
   for (const entry of queue) {
