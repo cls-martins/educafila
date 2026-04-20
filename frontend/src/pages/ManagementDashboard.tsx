@@ -21,15 +21,32 @@ const ManagementDashboard = () => {
       if (data) {
         setClassrooms(data);
         const queues: Record<string, any[]> = {};
-        for (const c of data) { const { data: q } = await supabase.from('queue_entries').select('*, profiles(full_name)').eq('classroom_id', c.id).order('position'); queues[c.id] = q || []; }
+        for (const c of data) {
+          const { data: q } = await supabase.from('queue_entries').select('*').eq('classroom_id', c.id).order('position');
+          const entries = (q ?? []) as any[];
+          const ids = Array.from(new Set(entries.map((e) => e.user_id)));
+          let profMap: Record<string, any> = {};
+          if (ids.length) {
+            const { data: profs } = await supabase.from('profiles').select('user_id, full_name').in('user_id', ids);
+            for (const p of (profs ?? []) as any[]) profMap[p.user_id] = p;
+          }
+          queues[c.id] = entries.map((e) => ({ ...e, profiles: profMap[e.user_id] }));
+        }
         setQueueData(queues);
       }
     };
     fetchClassrooms();
     const checkAlerts = async () => {
       const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000).toISOString();
-      const { data } = await supabase.from('bathroom_logs').select('*, profiles(full_name), classrooms(name)').eq('school_id', activeSchoolId).is('end_time', null).lt('start_time', sixMinAgo);
-      if (data) setAlerts(data);
+      const { data } = await supabase.from('bathroom_logs').select('*, classrooms(name)').eq('school_id', activeSchoolId).is('end_time', null).lt('start_time', sixMinAgo);
+      const rows = (data ?? []) as any[];
+      const ids = Array.from(new Set(rows.map((r) => r.user_id)));
+      let profMap: Record<string, any> = {};
+      if (ids.length) {
+        const { data: profs } = await supabase.from('profiles').select('user_id, full_name').in('user_id', ids);
+        for (const p of (profs ?? []) as any[]) profMap[p.user_id] = p;
+      }
+      setAlerts(rows.map((r) => ({ ...r, profiles: profMap[r.user_id] })));
     };
     checkAlerts();
     const interval = setInterval(checkAlerts, 30000);

@@ -98,31 +98,63 @@ const StudentDashboard = () => {
 
   const fetchQueue = useCallback(async () => {
     if (!classroomId || !activeSchoolId) return;
-    const { data } = await supabase
+    const { data: entries, error: qErr } = await supabase
       .from('queue_entries')
-      .select('*, profiles(full_name, display_name_tokens, name_color)')
+      .select('*')
       .eq('classroom_id', classroomId)
       .eq('school_id', activeSchoolId)
       .order('position', { ascending: true });
-    if (data) {
-      setQueue(data as any);
-      const mine = (data as any[]).find((e: any) => e.user_id === user?.id);
-      setMyEntry((mine as any) || null);
-      setIsInBathroom(mine?.status === 'in_bathroom');
+    if (qErr) {
+      toast({
+        title: 'Erro ao carregar fila',
+        description: qErr.message,
+        variant: 'destructive',
+      });
+      return;
     }
-  }, [classroomId, activeSchoolId, user?.id]);
+    const rows = (entries ?? []) as any[];
+    const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
+    let profilesMap: Record<string, any> = {};
+    if (userIds.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('user_id, full_name, display_name_tokens, name_color')
+        .in('user_id', userIds);
+      for (const p of (profs ?? []) as any[]) profilesMap[p.user_id] = p;
+    }
+    const merged = rows.map((r) => ({
+      ...r,
+      profiles: profilesMap[r.user_id]
+        ? {
+            full_name: profilesMap[r.user_id].full_name,
+            display_name_tokens: profilesMap[r.user_id].display_name_tokens,
+            name_color: profilesMap[r.user_id].name_color,
+          }
+        : undefined,
+    }));
+    setQueue(merged);
+    const mine = merged.find((e: any) => e.user_id === user?.id);
+    setMyEntry(mine || null);
+    setIsInBathroom(mine?.status === 'in_bathroom');
+  }, [classroomId, activeSchoolId, user?.id, toast]);
 
   const fetchIncomingSwaps = useCallback(async () => {
     if (!user?.id || !classroomId) return;
     const { data } = await supabase
       .from('swap_requests')
-      .select('*, profiles!swap_requests_requester_id_fkey(full_name)')
+      .select('*')
       .eq('target_id', user.id)
       .eq('classroom_id', classroomId)
       .eq('status', 'pending')
       .limit(1);
     if (data && data.length > 0) {
-      setIncomingSwap(data[0]);
+      const req = data[0] as any;
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('user_id', req.requester_id)
+        .maybeSingle();
+      setIncomingSwap({ ...req, profiles: prof || undefined });
       setIncomingSwapDialogOpen(true);
     }
   }, [user?.id, classroomId]);

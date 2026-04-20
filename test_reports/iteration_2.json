@@ -1,0 +1,53 @@
+{
+  "summary": "Retest of EducaFila student flow after FK + in-JS merge fix. The CRITICAL PGRST200 regression from iteration 1 is fully resolved: 0 HTTP 400s on /rest/v1/queue_entries or /rest/v1/swap_requests observed while entering/leaving the queue and loading the dashboard. Student login works, Entrar na Fila produces both [data-testid=leave-queue-btn] and [data-testid=queue-item-1] with the student's name, student menu opens with all 5 items, ProfileDialog/HelpDialog/AppDownloadDialog all open, dark-mode toggle adds/removes `dark` on <html>, logout returns to /login. One minor issue: after saving the profile with a red color (#dc2626), the queue item still renders the name with the previous color rgb(31,41,55) — the update may not be persisting (likely RLS silently filtering the UPDATE, or refreshProfile not being awaited into state before next fetch). Secondary concern: stale queue data (5+ 'Carlos Martins' leftover rows in classroom 'Administração 2° Ano') suggests leaveQueue + realtime didn't clean up cross-run data, and after a Sair da Fila click the UI occasionally still displayed the in-queue card — needs a look but not blocking.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PATCH /rest/v1/profiles (name_color, display_name_tokens)",
+        "issue": "Supabase call returns no error and the toast 'Perfil atualizado' is shown, but when the user re-enters the queue the queue-item-1 span style is still `color: rgb(31, 41, 55)` (default #1f2937) instead of the chosen #dc2626. Likely RLS is silently filtering the UPDATE (0 rows updated and no error), or the column is only writable via an RPC. Worth verifying RLS policy on public.profiles for the student's own row."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "StudentDashboard name color",
+        "issue": "After ProfileDialog save, the queue entry's name color does not reflect the newly chosen color. Either the update is not persisting (backend RLS) or refreshProfile is not reloading profiles used by fetchQueue before the next render.",
+        "selector": "[data-testid=queue-item-1] span[style*=color]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "StudentDashboard leave queue",
+        "issue": "After clicking [data-testid=leave-queue-btn] the UI in at least one run still showed the 'Sua posição 1°' card and Sair da Fila button (enter-queue-btn was not re-rendered). Might be stale test data (multiple rows for same user_id because the student was inserted many times during prior iterations) or leaveQueue deletes only one row and myEntry resolves to another leftover row. Worth inspecting for duplicate queue_entries rows per user and adding a unique partial index on (classroom_id,user_id) where status in ('waiting','in_bathroom').",
+        "selector": "[data-testid=leave-queue-btn]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Verify RLS policy on public.profiles allows the student to UPDATE their own display_name_tokens and name_color (auth.uid() = user_id), and consider returning the updated row via .select().single() to detect 0-row updates.",
+    "Investigate queue_entries state: multiple rows for the same user_id appear to linger after 'Sair da Fila'. Add a unique partial index or have leaveQueue delete all active rows for that user in the classroom.",
+    "Optional: after ProfileDialog save, explicitly refetch the queue so the new color is picked up immediately instead of relying on a second navigation."
+  ],
+  "critical_code_review_comments": [
+    "StudentDashboard.fetchQueue now correctly splits the query into queue_entries + profiles lookups — this is the right fix for PostgREST relationship errors and resolved the regression.",
+    "ProfileDialog.handleSave does not use .select() after .update(), so RLS-filtered 0-row updates are invisible to the UI. Recommend `.update(...).eq(...).select().single()` and treat empty result as an error.",
+    "ThemeContext.setTheme fires a fire-and-forget supabase update; still unchecked, preference can drift on RLS failure.",
+    "lib/queue.enterQueue still uses read-max-position then insert which is not race-safe — a quick back-to-back entry by the same student could create the stale duplicates observed in this run. Prefer a DB-side RPC that computes position atomically + a unique index to prevent duplicates."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only review)",
+    "frontend": "~90% — PGRST200 regression fixed; queue + menu + dialogs + dark mode + logout all working. Color personalization persistence and leave-queue idempotency still need attention."
+  },
+  "test_credentials": "Student carlos.martins128@aluno.ce.gov.br / carlos.daniel.candido.martins@edu2026 worked. Super admin credentials still not supplied — SuperAdminDashboard Horarios tab was not retested this iteration.",
+  "seed_data_creation": "None intentionally; however multiple queue_entries rows for carlos.martins128 accumulated in 'Administração 2° Ano' during testing — recommend cleanup.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PGRST200 is fixed. Focus next round on: (1) name color not applied to queue item after ProfileDialog save (check RLS on profiles and whether update returns 0 rows); (2) duplicate queue_entries rows per user (Sair da Fila should remove all active rows or unique index should prevent duplicates). If super_admin password becomes available, exercise SuperAdminDashboard Horarios tab selectors schedule-weekday-select/start-input/end-input/add-btn/delete-*.",
+  "rca of the issue": "Original PGRST200 root-caused in iteration 1 (PostgREST FK embed missing). Main agent's fix of running two queries and merging in JS, plus adding FK constraints server-side, completely removes the 400s. Verified with network interception: 0 REST errors observed across enter/leave/menu/profile flows."
+}

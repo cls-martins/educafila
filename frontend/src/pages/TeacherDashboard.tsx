@@ -36,8 +36,15 @@ const TeacherDashboard = () => {
 
   const fetchQueue = useCallback(async () => {
     if (!selectedClassroom) return;
-    const { data } = await supabase.from('queue_entries').select('*, profiles(full_name, avatar_url, gender)').eq('classroom_id', selectedClassroom).order('position', { ascending: true });
-    if (data) setQueue(data);
+    const { data: rows } = await supabase.from('queue_entries').select('*').eq('classroom_id', selectedClassroom).order('position', { ascending: true });
+    const entries = (rows ?? []) as any[];
+    const ids = Array.from(new Set(entries.map((e) => e.user_id)));
+    let profMap: Record<string, any> = {};
+    if (ids.length) {
+      const { data: profs } = await supabase.from('profiles').select('user_id, full_name, avatar_url, gender').in('user_id', ids);
+      for (const p of (profs ?? []) as any[]) profMap[p.user_id] = p;
+    }
+    setQueue(entries.map((e) => ({ ...e, profiles: profMap[e.user_id] })));
   }, [selectedClassroom]);
 
   useEffect(() => {
