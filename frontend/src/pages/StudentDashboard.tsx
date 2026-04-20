@@ -393,7 +393,7 @@ const StudentDashboard = () => {
             size="lg"
             onClick={handleJoin}
             disabled={joinDisabled}
-            className="w-full rounded-xl bg-[#1e3a8a] py-7 text-lg font-semibold text-white hover:bg-[#1e3a8a]/90 disabled:opacity-50"
+            className="w-full rounded-xl bg-[#005696] py-7 text-lg font-semibold text-white hover:bg-[#00426f] disabled:opacity-50"
             data-testid="enter-queue-btn"
           >
             <LogIn className="mr-2 h-5 w-5" />
