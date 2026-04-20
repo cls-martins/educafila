@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BookOpen, RotateCcw, LogOut, Plus, School, Search, UserPlus, DoorOpen, Upload, ArrowLeft, UserX, Users, Pencil, Trash2, Clock } from 'lucide-react';
+import { BookOpen, RotateCcw, LogOut, Plus, School, Search, UserPlus, DoorOpen, Upload, ArrowLeft, UserX, Users, Pencil, Trash2, Clock, Crown } from 'lucide-react';
 import { ScheduleManager } from '@/components/ScheduleManager';
+import { LeaderManager } from '@/components/LeaderManager';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -720,10 +721,11 @@ const SuperAdminDashboard = () => {
 
         {selectedSchool && (
           <Tabs defaultValue="cursos" className="w-full">
-            <TabsList className="grid w-full grid-cols-5 text-xs">
+            <TabsList className="grid w-full grid-cols-6 text-xs">
               <TabsTrigger value="cursos"><BookOpen className="h-3.5 w-3.5 mr-1" />Cursos</TabsTrigger>
               <TabsTrigger value="salas"><DoorOpen className="h-3.5 w-3.5 mr-1" />Salas</TabsTrigger>
               <TabsTrigger value="equipe"><Users className="h-3.5 w-3.5 mr-1" />Equipe</TabsTrigger>
+              <TabsTrigger value="lideres" data-testid="tab-lideres"><Crown className="h-3.5 w-3.5 mr-1" />Líderes</TabsTrigger>
               <TabsTrigger value="horarios" data-testid="tab-horarios"><Clock className="h-3.5 w-3.5 mr-1" />Horários</TabsTrigger>
               <TabsTrigger value="ano"><RotateCcw className="h-3.5 w-3.5 mr-1" />Virada</TabsTrigger>
             </TabsList>
@@ -995,6 +997,23 @@ const SuperAdminDashboard = () => {
                       ))}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Líderes Tab */}
+            <TabsContent value="lideres" className="pt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Crown className="h-5 w-5 text-[#F37021]" /> Líderes de Sala
+                  </CardTitle>
+                  <CardDescription>
+                    Escola: <strong>{selectedSchool.name}</strong> — defina Líder, Vice-Líder e Secretário de cada sala. Eles ajudam na disciplina da fila.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <LeaderManager schoolId={selectedSchoolId} />
                 </CardContent>
               </Card>
             </TabsContent>

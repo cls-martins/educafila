@@ -19,6 +19,7 @@ type UserProfile = {
   display_name_tokens: string[] | null;
   name_color: string | null;
   theme: 'light' | 'dark' | null;
+  leader_role: 'lider' | 'vice_lider' | 'secretario' | null;
 };
 
 type AuthContextType = {

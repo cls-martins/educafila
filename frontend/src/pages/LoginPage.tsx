@@ -58,6 +58,10 @@ const LoginPage = () => {
   const handleLogin = async (e: React.FormEvent, tabValue: TabValue, expectedDomain?: string) => {
     e.preventDefault();
     const trimmedEmail = email.trim().toLowerCase();
+    if (tabValue === 'aluno' && !selectedSchool) {
+      toast({ title: 'Escola obrigatória', description: 'Selecione sua escola para continuar.', variant: 'destructive' });
+      return;
+    }
     if (expectedDomain && !trimmedEmail.endsWith(expectedDomain)) {
       toast({ title: 'Email inválido', description: `Use um email ${expectedDomain}`, variant: 'destructive' });
       return;
@@ -92,12 +96,18 @@ const LoginPage = () => {
     // Also check profile is_active
     const { data: profileData } = await supabase
       .from('profiles')
-      .select('is_active')
+      .select('is_active, school_id')
       .eq('user_id', data.user.id)
       .maybeSingle();
     if (profileData && profileData.is_active === false) {
       await supabase.auth.signOut();
       toast({ title: 'Conta inativa', description: 'Sua conta está inativa. Procure a gestão da escola.', variant: 'destructive' });
+      setLoading(false);
+      return;
+    }
+    if (tabValue === 'aluno' && selectedSchool && profileData && profileData.school_id !== selectedSchool.id) {
+      await supabase.auth.signOut();
+      toast({ title: 'Escola incorreta', description: 'Sua conta pertence a outra escola. Selecione a correta.', variant: 'destructive' });
       setLoading(false);
       return;
     }
@@ -144,7 +154,7 @@ const LoginPage = () => {
                       <Label>Selecionar Escola</Label>
                       <Popover open={schoolPopoverOpen} onOpenChange={setSchoolPopoverOpen}>
                         <PopoverTrigger asChild>
-                          <Button variant="outline" className="w-full justify-start text-left font-normal" type="button">
+                          <Button variant="outline" className="w-full justify-start text-left font-normal" type="button" data-testid="select-school-btn">
                             <Search className="mr-2 h-4 w-4 text-muted-foreground" />
                             {selectedSchool ? selectedSchool.name : 'Buscar escola...'}
                           </Button>
@@ -155,7 +165,7 @@ const LoginPage = () => {
                             {filteredSchools.length === 0 ? (
                               <p className="text-xs text-muted-foreground text-center py-2">Nenhuma escola encontrada</p>
                             ) : filteredSchools.slice(0, 20).map((s) => (
-                              <button key={s.id} type="button" className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { setSelectedSchool(s); setSchoolPopoverOpen(false); setSchoolSearch(''); }}>
+                              <button key={s.id} type="button" className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { setSelectedSchool(s); setSchoolPopoverOpen(false); setSchoolSearch(''); }} data-testid={`school-option-${s.id}`}>
                                 <p className="font-medium text-foreground">{s.name}</p>
                                 <p className="text-xs text-muted-foreground">{s.city}</p>
                               </button>
@@ -163,22 +173,31 @@ const LoginPage = () => {
                           </div>
                         </PopoverContent>
                       </Popover>
+                      {!selectedSchool && (
+                        <p className="text-xs text-muted-foreground" data-testid="school-required-hint">
+                          Selecione sua escola para continuar.
+                        </p>
+                      )}
                     </div>
                   )}
-                  <div className="space-y-2">
-                    <Label htmlFor={`email-${tab.value}`}>Email</Label>
-                    <Input id={`email-${tab.value}`} type="email" placeholder={tab.domain ? `seu.nome${tab.domain}` : 'seu@email.com'} value={email} onChange={(e) => setEmail(e.target.value)} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={`pass-${tab.value}`}>Senha</Label>
-                    <div className="relative">
-                      <Input id={`pass-${tab.value}`} type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
-                      <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPassword(!showPassword)}>
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Entrando...' : 'Entrar'}</Button>
+                  {(!tab.showSchoolSearch || selectedSchool) && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor={`email-${tab.value}`}>Email</Label>
+                        <Input id={`email-${tab.value}`} type="email" placeholder={tab.domain ? `seu.nome${tab.domain}` : 'seu@email.com'} value={email} onChange={(e) => setEmail(e.target.value)} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`pass-${tab.value}`}>Senha</Label>
+                        <div className="relative">
+                          <Input id={`pass-${tab.value}`} type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                          <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPassword(!showPassword)}>
+                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </div>
+                      <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Entrando...' : 'Entrar'}</Button>
+                    </>
+                  )}
                 </form>
               </TabsContent>
             ))}

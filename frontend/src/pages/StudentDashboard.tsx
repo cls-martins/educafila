@@ -11,6 +11,7 @@ import {
   requestSwap,
   respondToSwap,
 } from '@/lib/queue';
+import { applyPenalty } from '@/lib/queue';
 import { fetchSchedules, computeStatus, BathroomSchedule } from '@/lib/schedule';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -46,7 +47,14 @@ type QueueRow = {
     full_name: string;
     display_name_tokens: string[] | null;
     name_color: string | null;
+    leader_role?: 'lider' | 'vice_lider' | 'secretario' | null;
   };
+};
+
+const LEADER_LABEL: Record<string, string> = {
+  lider: 'Líder',
+  vice_lider: 'Vice-Líder',
+  secretario: 'Secretário',
 };
 
 function renderDisplayName(p?: QueueRow['profiles'], fallbackColor = 'currentColor') {
@@ -66,6 +74,7 @@ const StudentDashboard = () => {
   const [isInBathroom, setIsInBathroom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [schedules, setSchedules] = useState<BathroomSchedule[]>([]);
+  const [timeoutAlert, setTimeoutAlert] = useState<{ name: string; at: number } | null>(null);
   const [nowTick, setNowTick] = useState(0); // re-render each minute
   const [swapDialogOpen, setSwapDialogOpen] = useState(false);
   const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
@@ -79,6 +88,12 @@ const StudentDashboard = () => {
     const t = setInterval(() => setNowTick((n) => n + 1), 30_000);
     return () => clearInterval(t);
   }, []);
+
+  // Dismiss the timeout alert after 3 min from the incident.
+  useEffect(() => {
+    if (!timeoutAlert) return;
+    if (Date.now() - timeoutAlert.at > 3 * 60 * 1000) setTimeoutAlert(null);
+  }, [nowTick, timeoutAlert]);
 
   const scheduleStatus = useMemo(
     () => computeStatus(schedules, new Date()),
@@ -118,7 +133,7 @@ const StudentDashboard = () => {
     if (userIds.length > 0) {
       const { data: profs } = await supabase
         .from('profiles')
-        .select('user_id, full_name, display_name_tokens, name_color')
+        .select('user_id, full_name, display_name_tokens, name_color, leader_role')
         .in('user_id', userIds);
       for (const p of (profs ?? []) as any[]) profilesMap[p.user_id] = p;
     }
@@ -129,6 +144,7 @@ const StudentDashboard = () => {
             full_name: profilesMap[r.user_id].full_name,
             display_name_tokens: profilesMap[r.user_id].display_name_tokens,
             name_color: profilesMap[r.user_id].name_color,
+            leader_role: profilesMap[r.user_id].leader_role,
           }
         : undefined,
     }));
@@ -165,11 +181,46 @@ const StudentDashboard = () => {
     setSchedules(data);
   }, [activeSchoolId]);
 
+  // Watch recent "exceeded" bathroom logs for this classroom and show a banner
+  // for 3 minutes after the incident. Other students see: "Fulano demorou — a
+  // fila continua normalmente."
+  const checkTimeoutAlert = useCallback(async () => {
+    if (!classroomId || !activeSchoolId) return;
+    const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from('bathroom_logs')
+      .select('id, user_id, end_time')
+      .eq('classroom_id', classroomId)
+      .eq('exceeded', true)
+      .gte('end_time', since)
+      .order('end_time', { ascending: false })
+      .limit(1);
+    if (!data || data.length === 0) {
+      setTimeoutAlert(null);
+      return;
+    }
+    const row = data[0] as any;
+    if (row.user_id === user?.id) {
+      setTimeoutAlert(null);
+      return;
+    }
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('full_name, display_name_tokens')
+      .eq('user_id', row.user_id)
+      .maybeSingle();
+    const tokens = ((prof as any)?.display_name_tokens || []) as string[];
+    const name =
+      (tokens.length > 0 ? tokens.join(' ') : (prof as any)?.full_name) || 'Um colega';
+    setTimeoutAlert({ name, at: new Date(row.end_time).getTime() });
+  }, [classroomId, activeSchoolId, user?.id]);
+
   useEffect(() => {
     fetchClassroom();
     fetchQueue();
     fetchIncomingSwaps();
     loadSchedules();
+    checkTimeoutAlert();
     if (!classroomId) return;
     const ch = supabase
       .channel('student-queue-realtime')
@@ -183,11 +234,16 @@ const StudentDashboard = () => {
         { event: '*', schema: 'public', table: 'swap_requests', filter: `classroom_id=eq.${classroomId}` },
         fetchIncomingSwaps,
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'bathroom_logs', filter: `classroom_id=eq.${classroomId}` },
+        checkTimeoutAlert,
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [fetchClassroom, fetchQueue, fetchIncomingSwaps, loadSchedules, classroomId]);
+  }, [fetchClassroom, fetchQueue, fetchIncomingSwaps, loadSchedules, checkTimeoutAlert, classroomId]);
 
   // Re-render queue when the current user's display preferences change (after ProfileDialog save).
   useEffect(() => {
@@ -296,6 +352,34 @@ const StudentDashboard = () => {
   const queueOpen = schedules.length === 0 ? true : scheduleStatus.open;
   const joinDisabled =
     loading || !!myEntry || !classroomId || !activeSchoolId || (!queueOpen && schedules.length > 0);
+  const iAmLeader = !!(profile as any)?.leader_role;
+
+  const handleLeaderRemove = async (entryId: string) => {
+    if (!classroomId || !activeSchoolId) return;
+    setLoading(true);
+    const { error } = await supabase.from('queue_entries').delete().eq('id', entryId);
+    if (error) {
+      toast({ title: 'Não foi possível remover', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Aluno removido da fila' });
+    }
+    await fetchQueue();
+    setLoading(false);
+  };
+
+  const handleLeaderPenalty = async (targetUserId: string, targetName: string) => {
+    if (!classroomId || !activeSchoolId) return;
+    setLoading(true);
+    await applyPenalty(
+      targetUserId,
+      classroomId,
+      activeSchoolId,
+      `Penalidade aplicada pelo ${LEADER_LABEL[(profile as any)?.leader_role || 'lider']} da sala`,
+    );
+    toast({ title: 'Penalidade aplicada', description: `${targetName} foi recuado na fila.` });
+    await fetchQueue();
+    setLoading(false);
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -387,13 +471,31 @@ const StudentDashboard = () => {
           </Card>
         )}
 
+        {/* Banner: outro aluno excedeu o tempo */}
+        {!isInBathroom && timeoutAlert && (
+          <div
+            className="flex items-start gap-3 rounded-lg border border-warning/50 bg-warning/10 p-3"
+            data-testid="timeout-alert-banner"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                {timeoutAlert.name} excedeu o tempo (6 min)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                A fila continua normalmente — o próximo pode seguir.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Ação primária */}
         {!isInBathroom && !myEntry && (
           <Button
             size="lg"
             onClick={handleJoin}
             disabled={joinDisabled}
-            className="w-full rounded-xl bg-[#005696] py-7 text-lg font-semibold text-white hover:bg-[#00426f] disabled:opacity-50"
+            className="w-full rounded-xl bg-[#005F36] py-7 text-lg font-semibold text-white hover:bg-[#00824A] disabled:opacity-50"
             data-testid="enter-queue-btn"
           >
             <LogIn className="mr-2 h-5 w-5" />
@@ -469,6 +571,7 @@ const StudentDashboard = () => {
               {queue.map((entry) => {
                 const { text, color } = renderDisplayName(entry.profiles);
                 const penalties = entry.penalty_count || 0;
+                const leaderRole = entry.profiles?.leader_role ?? null;
                 return (
                   <div
                     key={entry.id}
@@ -477,39 +580,77 @@ const StudentDashboard = () => {
                     }`}
                     data-testid={`queue-item-${entry.position}`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
                         {entry.position}
                       </span>
-                      <span className="text-sm font-semibold" style={{ color }}>
-                        {text}
-                      </span>
-                      {penalties > 0 && (
-                        <span
-                          className="flex items-center gap-0.5 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive"
-                          title={`${penalties} penalidade(s)`}
-                          data-testid={`penalty-badge-${entry.position}`}
-                        >
-                          <AlertTriangle className="h-3 w-3" />
-                          {penalties}
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <span className="truncate text-sm font-semibold" style={{ color }}>
+                          {text}
                         </span>
+                        {leaderRole && (
+                          <span
+                            className="rounded-full bg-[#F37021]/10 px-2 py-0.5 text-xs font-semibold text-[#F37021]"
+                            data-testid={`leader-badge-${entry.position}`}
+                          >
+                            {LEADER_LABEL[leaderRole]}
+                          </span>
+                        )}
+                        {penalties > 0 && (
+                          <span
+                            className="flex items-center gap-0.5 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive"
+                            title={`${penalties} penalidade(s)`}
+                            data-testid={`penalty-badge-${entry.position}`}
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            {penalties}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Badge
+                        variant={
+                          entry.status === 'in_bathroom'
+                            ? 'destructive'
+                            : entry.status === 'returned'
+                              ? 'default'
+                              : 'secondary'
+                        }
+                      >
+                        {entry.status === 'in_bathroom'
+                          ? 'No banheiro'
+                          : entry.status === 'returned'
+                            ? 'Voltou'
+                            : 'Aguardando'}
+                      </Badge>
+                      {iAmLeader && entry.user_id !== user?.id && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleLeaderPenalty(entry.user_id, text)}
+                            disabled={loading}
+                            className="flex h-8 w-8 items-center justify-center rounded hover:bg-accent"
+                            title="Aplicar penalidade"
+                            aria-label="Aplicar penalidade"
+                            data-testid={`leader-penalty-btn-${entry.position}`}
+                          >
+                            <AlertTriangle className="h-4 w-4 text-warning" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleLeaderRemove(entry.id)}
+                            disabled={loading}
+                            className="flex h-8 w-8 items-center justify-center rounded hover:bg-accent"
+                            title="Remover da fila"
+                            aria-label="Remover da fila"
+                            data-testid={`leader-remove-btn-${entry.position}`}
+                          >
+                            <XCircle className="h-4 w-4 text-destructive" />
+                          </button>
+                        </>
                       )}
                     </div>
-                    <Badge
-                      variant={
-                        entry.status === 'in_bathroom'
-                          ? 'destructive'
-                          : entry.status === 'returned'
-                            ? 'default'
-                            : 'secondary'
-                      }
-                    >
-                      {entry.status === 'in_bathroom'
-                        ? 'No banheiro'
-                        : entry.status === 'returned'
-                          ? 'Voltou'
-                          : 'Aguardando'}
-                    </Badge>
                   </div>
                 );
               })}

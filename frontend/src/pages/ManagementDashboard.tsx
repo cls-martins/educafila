@@ -4,9 +4,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { LogOut, AlertTriangle, Users, Clock } from 'lucide-react';
+import { LogOut, AlertTriangle, Users, Clock, Crown } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScheduleManager } from '@/components/ScheduleManager';
+import { LeaderManager } from '@/components/LeaderManager';
 
 const ManagementDashboard = () => {
   const { profile, signOut, activeSchoolId } = useAuth();
@@ -66,6 +67,7 @@ const ManagementDashboard = () => {
           <TabsList>
             <TabsTrigger value="overview" data-testid="tab-overview">Visão das Salas</TabsTrigger>
             <TabsTrigger value="schedules" data-testid="tab-schedules">Horários da Fila</TabsTrigger>
+            <TabsTrigger value="leaders" data-testid="tab-leaders">Líderes</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-6">
         {alerts.length > 0 && (
@@ -103,6 +105,13 @@ const ManagementDashboard = () => {
           <TabsContent value="schedules">
             {activeSchoolId ? (
               <ScheduleManager schoolId={activeSchoolId} />
+            ) : (
+              <p className="text-sm text-muted-foreground">Nenhuma escola ativa.</p>
+            )}
+          </TabsContent>
+          <TabsContent value="leaders">
+            {activeSchoolId ? (
+              <LeaderManager schoolId={activeSchoolId} />
             ) : (
               <p className="text-sm text-muted-foreground">Nenhuma escola ativa.</p>
             )}
