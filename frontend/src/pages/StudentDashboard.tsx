@@ -47,6 +47,8 @@ type QueueRow = {
     full_name: string;
     display_name_tokens: string[] | null;
     name_color: string | null;
+    avatar_url: string | null;
+    gender: string | null;
     leader_role?: 'lider' | 'vice_lider' | 'secretario' | null;
   };
 };
@@ -75,6 +77,7 @@ const StudentDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [schedules, setSchedules] = useState<BathroomSchedule[]>([]);
   const [timeoutAlert, setTimeoutAlert] = useState<{ name: string; at: number } | null>(null);
+  const [splitByGender, setSplitByGender] = useState(false);
   const [nowTick, setNowTick] = useState(0); // re-render each minute
   const [swapDialogOpen, setSwapDialogOpen] = useState(false);
   const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
@@ -105,10 +108,13 @@ const StudentDashboard = () => {
     if (!classroomId) return;
     const { data } = await supabase
       .from('classrooms')
-      .select('name')
+      .select('name, split_queue_by_gender')
       .eq('id', classroomId)
       .maybeSingle();
-    if (data) setClassroomName((data as any).name);
+    if (data) {
+      setClassroomName((data as any).name);
+      setSplitByGender(!!(data as any).split_queue_by_gender);
+    }
   }, [classroomId]);
 
   const fetchQueue = useCallback(async () => {
@@ -133,7 +139,7 @@ const StudentDashboard = () => {
     if (userIds.length > 0) {
       const { data: profs } = await supabase
         .from('profiles')
-        .select('user_id, full_name, display_name_tokens, name_color, leader_role')
+        .select('user_id, full_name, display_name_tokens, name_color, leader_role, avatar_url, gender')
         .in('user_id', userIds);
       for (const p of (profs ?? []) as any[]) profilesMap[p.user_id] = p;
     }
@@ -145,6 +151,8 @@ const StudentDashboard = () => {
             display_name_tokens: profilesMap[r.user_id].display_name_tokens,
             name_color: profilesMap[r.user_id].name_color,
             leader_role: profilesMap[r.user_id].leader_role,
+            avatar_url: profilesMap[r.user_id].avatar_url,
+            gender: profilesMap[r.user_id].gender,
           }
         : undefined,
     }));
@@ -238,6 +246,11 @@ const StudentDashboard = () => {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'bathroom_logs', filter: `classroom_id=eq.${classroomId}` },
         checkTimeoutAlert,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'classrooms', filter: `id=eq.${classroomId}` },
+        fetchClassroom,
       )
       .subscribe();
     return () => {
@@ -367,18 +380,20 @@ const StudentDashboard = () => {
     setLoading(false);
   };
 
-  const handleLeaderPenalty = async (targetUserId: string, targetName: string) => {
-    if (!classroomId || !activeSchoolId) return;
+  const handleToggleSplit = async () => {
+    if (!classroomId) return;
     setLoading(true);
-    await applyPenalty(
-      targetUserId,
-      classroomId,
-      activeSchoolId,
-      `Penalidade aplicada pelo ${LEADER_LABEL[(profile as any)?.leader_role || 'lider']} da sala`,
-    );
-    toast({ title: 'Penalidade aplicada', description: `${targetName} foi recuado na fila.` });
-    await fetchQueue();
+    const { error } = await supabase
+      .from('classrooms')
+      .update({ split_queue_by_gender: !splitByGender } as any)
+      .eq('id', classroomId);
     setLoading(false);
+    if (error) {
+      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
+      return;
+    }
+    // Realtime UPDATE will refresh; optimistic local flip:
+    setSplitByGender((v) => !v);
   };
 
   return (

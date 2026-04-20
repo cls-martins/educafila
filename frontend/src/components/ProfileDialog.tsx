@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Camera, Trash2 } from 'lucide-react';
 
 interface Props {
   open: boolean;
@@ -57,6 +58,9 @@ export const ProfileDialog: React.FC<Props> = ({ open, onOpenChange }) => {
   const [color, setColor] = useState<string>('#1f2937');
   const [customColor, setCustomColor] = useState<string>('');
   const [saving, setSaving] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -65,7 +69,60 @@ export const ProfileDialog: React.FC<Props> = ({ open, onOpenChange }) => {
     else setSelected(tokens.slice(0, 2));
     setColor((profile as any)?.name_color || '#1f2937');
     setCustomColor('');
+    setAvatarUrl((profile as any)?.avatar_url || null);
   }, [open, profile, tokens]);
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user?.id) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: 'Arquivo muito grande', description: 'Máximo 2 MB.', variant: 'destructive' });
+      return;
+    }
+    setUploadingAvatar(true);
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${user.id}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (upErr) {
+      setUploadingAvatar(false);
+      toast({ title: 'Erro ao enviar foto', description: upErr.message, variant: 'destructive' });
+      return;
+    }
+    const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+    const url = pub.publicUrl;
+    // Persist immediately so the avatar shows even if user cancels other edits.
+    const { error: updErr } = await supabase
+      .from('profiles')
+      .update({ avatar_url: url } as any)
+      .eq('user_id', user.id);
+    setUploadingAvatar(false);
+    if (updErr) {
+      toast({ title: 'Erro ao salvar foto', description: updErr.message, variant: 'destructive' });
+      return;
+    }
+    setAvatarUrl(url);
+    toast({ title: 'Foto atualizada' });
+    if (typeof refreshProfile === 'function') await refreshProfile();
+  };
+
+  const handleAvatarRemove = async () => {
+    if (!user?.id) return;
+    setUploadingAvatar(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ avatar_url: null } as any)
+      .eq('user_id', user.id);
+    setUploadingAvatar(false);
+    if (error) {
+      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
+      return;
+    }
+    setAvatarUrl(null);
+    toast({ title: 'Foto removida' });
+    if (typeof refreshProfile === 'function') await refreshProfile();
+  };
 
   const toggleToken = (t: string) => {
     setSelected((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -128,6 +185,61 @@ export const ProfileDialog: React.FC<Props> = ({ open, onOpenChange }) => {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          <div className="flex items-center gap-4" data-testid="avatar-section">
+            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-border bg-secondary">
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt="Foto de perfil"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-2xl font-bold text-muted-foreground">
+                  {(profile?.full_name || '?').slice(0, 1).toUpperCase()}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleAvatarChange}
+                data-testid="avatar-file-input"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploadingAvatar}
+                  data-testid="avatar-upload-btn"
+                >
+                  <Camera className="mr-1 h-4 w-4" />
+                  {uploadingAvatar ? 'Enviando…' : avatarUrl ? 'Trocar foto' : 'Enviar foto'}
+                </Button>
+                {avatarUrl && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleAvatarRemove}
+                    disabled={uploadingAvatar}
+                    data-testid="avatar-remove-btn"
+                  >
+                    <Trash2 className="mr-1 h-4 w-4" />
+                    Remover
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                JPG, PNG ou WEBP — máx. 2 MB.
+              </p>
+            </div>
+          </div>
+
           <div>
             <Label className="text-xs">Nomes a exibir</Label>
             <div className="mt-2 flex flex-wrap gap-2">
