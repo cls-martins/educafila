@@ -92,16 +92,25 @@ export const ProfileDialog: React.FC<Props> = ({ open, onOpenChange }) => {
     setSaving(true);
     // Keep order matching the original full_name order
     const ordered = tokens.filter((t) => selected.includes(t));
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .update({
         display_name_tokens: ordered,
         name_color: finalColor,
       } as any)
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .select('user_id, display_name_tokens, name_color');
     setSaving(false);
     if (error) {
       toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+      return;
+    }
+    if (!data || data.length === 0) {
+      toast({
+        title: 'Não foi possível salvar',
+        description: 'Seu perfil não foi atualizado (verifique permissões).',
+        variant: 'destructive',
+      });
       return;
     }
     toast({ title: 'Perfil atualizado' });

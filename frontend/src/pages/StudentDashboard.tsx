@@ -189,6 +189,12 @@ const StudentDashboard = () => {
     };
   }, [fetchClassroom, fetchQueue, fetchIncomingSwaps, loadSchedules, classroomId]);
 
+  // Re-render queue when the current user's display preferences change (after ProfileDialog save).
+  useEffect(() => {
+    fetchQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.name_color, (profile as any)?.display_name_tokens?.join(',')]);
+
   const onTimerFinished = useCallback(() => {
     setIsInBathroom(false);
     fetchQueue();

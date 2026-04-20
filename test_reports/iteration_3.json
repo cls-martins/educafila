@@ -1,0 +1,29 @@
+{
+  "summary": "RETESTE 3 (frontend-only) for EducaFila student flow confirms both MEDIUM issues from iteration 2 are RESOLVED: (A) profile color now persists and applies instantly to queue-item-1 span after save (no reload needed); (B) enterQueue is idempotent and leaveQueue clears all active rows — 3 consecutive enter/leave cycles kept the queue count at exactly 1 item each time. Menu flows (profile, theme, help, app, logout) all functional. Invalid white color is correctly blocked with toast and the previous color is preserved. All 9 requested scenarios passed.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ProfileDialog.handleSave now uses .update(...).eq(...).select() and surfaces 'Não foi possível salvar' when 0 rows return — good defensive pattern.",
+    "StudentDashboard has a dedicated useEffect that re-runs fetchQueue when profile.name_color / display_name_tokens change — confirmed working: color updates immediately without reload.",
+    "lib/queue.enterQueue is idempotent (returns existing active row) and leaveQueue deletes ALL active rows for the user in the classroom — duplicates no longer accumulate. The DB UNIQUE INDEX in queue_entries(classroom_id,user_id) WHERE status IN ('waiting','in_bathroom','called') provides a hard guard.",
+    "Minor suggestion (non-blocking): enterQueue still does read-max-position + insert client-side; the unique index will now raise on races, but the app currently swallows that insert error silently because handleJoin only surfaces toast on the insert error object — should also refetch and tolerate 23505 gracefully.",
+    "Minor: leaveQueue runs a DELETE by user_id for the classroom without scoping school_id — acceptable because a user is bound to one school, but worth tightening if multi-school profiles appear later."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only)",
+    "frontend": "100% — all 9 requested scenarios passed"
+  },
+  "test_credentials": "Student carlos.martins128@aluno.ce.gov.br / carlos.daniel.candido.martins@edu2026 — works.",
+  "seed_data_creation": "None. The 3x enter/leave cycles confirmed no duplicate queue_entries are created.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iterations 1 & 2 addressed PGRST200 and the two MEDIUM issues (color persistence, duplicate queue rows). Iteration 3 verifies both fixes hold. Future runs can focus on Gestão/Professor/SuperAdmin flows (credentials still not supplied) and on stress-testing the realtime channel when multiple students enter/leave simultaneously.",
+  "rca of the issue": "Color-persistence fix: ProfileDialog now requests .select() after update, exposing silent RLS 0-row cases; StudentDashboard listens to profile.name_color in a useEffect and refetches the queue, so the new color lands in the rendered span without reload. Duplicate-rows fix: enterQueue short-circuits when an active row exists, leaveQueue deletes all active rows for the user, and a unique partial index on (classroom_id,user_id) WHERE status IN ('waiting','in_bathroom','called') guards against races. Verified live: 3 consecutive cycles kept queue count = 1; red #dc2626 and green #16a34a rendered immediately; white #ffffff rejected with 'Cor inválida' toast without mutating the saved color."
+}

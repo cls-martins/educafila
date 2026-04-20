@@ -20,6 +20,18 @@ export async function enterQueue(
   classroomId: string,
   schoolId: string
 ): Promise<{ data: any; error: any }> {
+  // Guard: if the user already has an active row, return it instead of duplicating.
+  const { data: mine } = await supabase
+    .from('queue_entries')
+    .select('*')
+    .eq('classroom_id', classroomId)
+    .eq('user_id', userId)
+    .in('status', ['waiting', 'in_bathroom', 'called'] as any)
+    .limit(1);
+  if (mine && mine.length > 0) {
+    return { data: mine[0], error: null };
+  }
+
   const { data: existing } = await supabase
     .from('queue_entries')
     .select('position')
@@ -44,7 +56,21 @@ export async function leaveQueue(
   classroomId: string,
   schoolId: string
 ): Promise<void> {
-  await supabase.from('queue_entries').delete().eq('id', entryId);
+  // Idempotent: delete the clicked entry AND any other active rows for the same user in this classroom.
+  const { data: entry } = await supabase
+    .from('queue_entries')
+    .select('user_id')
+    .eq('id', entryId)
+    .maybeSingle();
+  if (entry?.user_id) {
+    await supabase
+      .from('queue_entries')
+      .delete()
+      .eq('classroom_id', classroomId)
+      .eq('user_id', entry.user_id);
+  } else {
+    await supabase.from('queue_entries').delete().eq('id', entryId);
+  }
   await reorderQueue(classroomId, schoolId);
 }
 
