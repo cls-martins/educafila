@@ -1030,6 +1030,9 @@ const StudentDashboard = () => {
         onOpenChange={setPenaltiesListOpen}
         classroomId={classroomId || ''}
         classroomName={classroomName}
+        schoolId={activeSchoolId || ''}
+        canManage
+        currentUserId={user?.id}
       />
     </div>
   );

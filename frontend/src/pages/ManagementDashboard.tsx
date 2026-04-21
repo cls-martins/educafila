@@ -4,16 +4,18 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { LogOut, AlertTriangle, Users, Clock, Crown } from 'lucide-react';
+import { LogOut, AlertTriangle, Users, Clock, Shield } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScheduleManager } from '@/components/ScheduleManager';
 import { LeaderManager } from '@/components/LeaderManager';
+import ClassroomPenaltiesDialog from '@/components/ClassroomPenaltiesDialog';
 
 const ManagementDashboard = () => {
-  const { profile, signOut, activeSchoolId } = useAuth();
+  const { user, profile, signOut, activeSchoolId } = useAuth();
   const [classrooms, setClassrooms] = useState<any[]>([]);
   const [queueData, setQueueData] = useState<Record<string, any[]>>({});
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [penaltiesOpen, setPenaltiesOpen] = useState(false);
 
   useEffect(() => {
     if (!activeSchoolId) return;
@@ -83,7 +85,19 @@ const ManagementDashboard = () => {
             </CardContent>
           </Card>
         )}
-        <h2 className="text-xl font-semibold text-foreground">Visão das Salas</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-foreground">Visão das Salas</h2>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setPenaltiesOpen(true)}
+            data-testid="mgmt-open-penalties-btn"
+            className="gap-1"
+          >
+            <Shield className="h-4 w-4" />
+            Penalidades (todas as salas)
+          </Button>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {classrooms.map((c: any) => {
             const q = queueData[c.id] || []; const inBathroom = q.filter((e: any) => e.status === 'in_bathroom');
@@ -118,6 +132,15 @@ const ManagementDashboard = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Dialog: penalidades de TODAS as salas da escola (gestão) */}
+      <ClassroomPenaltiesDialog
+        open={penaltiesOpen}
+        onOpenChange={setPenaltiesOpen}
+        schoolId={activeSchoolId || ''}
+        canManage
+        currentUserId={user?.id}
+      />
     </div>
   );
 };

@@ -594,6 +594,9 @@ const TeacherDashboard = () => {
         classroomName={
           classrooms.find((c: any) => c.id === selectedClassroom)?.name
         }
+        schoolId={activeSchoolId || ''}
+        canManage
+        currentUserId={user?.id}
       />
     </div>
   );

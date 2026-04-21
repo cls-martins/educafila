@@ -53,13 +53,23 @@ export async function enterQueue(
 
   const nextPosition = (existing?.[0]?.position ?? 0) + 1;
 
-  return supabase.from('queue_entries').insert({
+  const insertRes = await supabase.from('queue_entries').insert({
     school_id: schoolId,
     classroom_id: classroomId,
     user_id: userId,
     position: nextPosition,
     status: 'waiting' as any,
   });
+
+  // Restore the displayed penalty counter from the persistent `penalties`
+  // history so it doesn't "disappear" when the student leaves & rejoins.
+  try {
+    await syncUserPenaltyCount(userId, schoolId);
+  } catch {
+    /* best-effort */
+  }
+
+  return insertRes;
 }
 
 /**
@@ -286,6 +296,71 @@ export async function applyPenalty(
     .from('queue_entries')
     .update({ position: newPosition })
     .eq('id', myEntry.id);
+}
+
+/**
+ * Read the total number of penalties for a user in a school and mirror it into
+ * any active `queue_entries.penalty_count` row for that user. Used so the
+ * display counter never "disappears" when a student leaves and rejoins the
+ * queue (the entry row is recreated but we restore the count from history).
+ */
+export async function syncUserPenaltyCount(
+  userId: string,
+  schoolId: string,
+): Promise<number> {
+  const { count } = await supabase
+    .from('penalties')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('school_id', schoolId);
+  const total = count ?? 0;
+  await supabase
+    .from('queue_entries')
+    .update({ penalty_count: total } as any)
+    .eq('user_id', userId)
+    .eq('school_id', schoolId);
+  return total;
+}
+
+/**
+ * Remove a single penalty. After removing, resync the queue_entry counter so
+ * the displayed count reflects the real history. Optionally revert the
+ * student's position bump (best-effort — we leave queue position alone as
+ * reshuffling mid-fila would be confusing).
+ */
+export async function removePenalty(penaltyId: string): Promise<void> {
+  // Fetch the row first so we know which user/school to resync.
+  const { data: row } = await supabase
+    .from('penalties')
+    .select('user_id, school_id')
+    .eq('id', penaltyId)
+    .maybeSingle();
+  await supabase.from('penalties').delete().eq('id', penaltyId);
+  if (row?.user_id && row?.school_id) {
+    await syncUserPenaltyCount(row.user_id, row.school_id);
+  }
+}
+
+/**
+ * Apply a penalty to a student even when they are NOT in the queue. Uses the
+ * same underlying `applyPenalty` logic but skips the queue-position bump when
+ * the student has no active entry (the insertion of the `penalties` row is
+ * what teachers/leaders/management care about here).
+ */
+export async function applyPenaltyStandalone(
+  userId: string,
+  classroomId: string,
+  schoolId: string,
+  reason: string,
+  appliedBy?: string | null,
+): Promise<void> {
+  // applyPenalty already handles the "not in queue" case gracefully — it
+  // returns early if no queue entry exists for the user. We still want the
+  // `penalties` insert, the infraction_number and the penalty_percent math,
+  // which applyPenalty does. So just reuse it.
+  await applyPenalty(userId, classroomId, schoolId, reason, appliedBy ?? null);
+  // Resync counter for any future queue entry (and any current one).
+  await syncUserPenaltyCount(userId, schoolId);
 }
 
 export async function requestSwap(

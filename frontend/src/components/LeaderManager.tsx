@@ -59,12 +59,14 @@ export const LeaderManager: React.FC<Props> = ({ schoolId }) => {
       return;
     }
     setLoading(true);
-    // Students of this classroom that have role 'aluno'
+    // Students of this classroom that have role 'aluno'. We intentionally do
+    // NOT filter by `is_active` here — accounts provisioned before that flag
+    // was enforced can have a NULL/false value and would otherwise be hidden
+    // from the Management / SuperAdmin leader picker.
     const { data: profs } = await supabase
       .from('profiles')
       .select('user_id, full_name, classroom_id, leader_role')
       .eq('classroom_id', selectedClassroom)
-      .eq('is_active', true)
       .order('full_name');
     const ids = ((profs as any) ?? []).map((p: any) => p.user_id);
     let alunoSet = new Set<string>();
