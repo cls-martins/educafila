@@ -396,6 +396,20 @@ const StudentDashboard = () => {
     setSplitByGender((v) => !v);
   };
 
+  const handleLeaderPenalty = async (targetUserId: string, targetName: string) => {
+    if (!classroomId || !activeSchoolId) return;
+    setLoading(true);
+    await applyPenalty(
+      targetUserId,
+      classroomId,
+      activeSchoolId,
+      `Penalidade aplicada pelo ${LEADER_LABEL[(profile as any)?.leader_role || 'lider']} da sala`,
+    );
+    toast({ title: 'Penalidade aplicada', description: `${targetName} foi recuado na fila.` });
+    await fetchQueue();
+    setLoading(false);
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card">
@@ -575,100 +589,123 @@ const StudentDashboard = () => {
               ({queue.length} na fila)
             </span>
           </h2>
+        {/* Lista da fila */}
+        <section>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-xl font-bold">
+              Lista do Banheiro {classroomName ? `— ${classroomName}` : ''}{' '}
+              <span className="text-sm font-normal text-muted-foreground">
+                ({queue.length} na fila)
+              </span>
+            </h2>
+            {iAmLeader && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleToggleSplit}
+                disabled={loading}
+                data-testid="toggle-split-btn"
+              >
+                {splitByGender ? 'Unificar fila' : 'Dividir por gênero'}
+              </Button>
+            )}
+          </div>
+
           {queue.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
               <LogIn className="mb-2 h-10 w-10 opacity-40" />
               <p className="text-base font-semibold text-foreground">A fila está vazia</p>
               <p className="text-sm">Seja o primeiro a entrar!</p>
             </div>
-          ) : (
-            <div className="space-y-2">
-              {queue.map((entry) => {
-                const { text, color } = renderDisplayName(entry.profiles);
-                const penalties = entry.penalty_count || 0;
-                const leaderRole = entry.profiles?.leader_role ?? null;
+          ) : splitByGender ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="queue-split">
+              {(
+                [
+                  { key: 'feminino', label: 'Feminino', tint: 'bg-pink-50 dark:bg-pink-950/20' },
+                  { key: 'masculino', label: 'Masculino', tint: 'bg-blue-50 dark:bg-blue-950/20' },
+                ] as const
+              ).map((col) => {
+                const items = queue.filter((e) =>
+                  col.key === 'feminino'
+                    ? e.profiles?.gender === 'feminino'
+                    : e.profiles?.gender === 'masculino',
+                );
                 return (
                   <div
-                    key={entry.id}
-                    className={`flex items-center justify-between rounded-lg border p-3 ${
-                      entry.user_id === user?.id ? 'border-primary bg-primary/5' : 'border-border'
-                    }`}
-                    data-testid={`queue-item-${entry.position}`}
+                    key={col.key}
+                    className={`rounded-lg border p-3 ${col.tint}`}
+                    data-testid={`queue-column-${col.key}`}
                   >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
-                        {entry.position}
+                    <h3 className="mb-2 text-sm font-semibold">
+                      {col.label}{' '}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        ({items.length})
                       </span>
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <span className="truncate text-sm font-semibold" style={{ color }}>
-                          {text}
-                        </span>
-                        {leaderRole && (
-                          <span
-                            className="rounded-full bg-[#F37021]/10 px-2 py-0.5 text-xs font-semibold text-[#F37021]"
-                            data-testid={`leader-badge-${entry.position}`}
-                          >
-                            {LEADER_LABEL[leaderRole]}
-                          </span>
-                        )}
-                        {penalties > 0 && (
-                          <span
-                            className="flex items-center gap-0.5 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive"
-                            title={`${penalties} penalidade(s)`}
-                            data-testid={`penalty-badge-${entry.position}`}
-                          >
-                            <AlertTriangle className="h-3 w-3" />
-                            {penalties}
-                          </span>
-                        )}
+                    </h3>
+                    {items.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">Ninguém ainda.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {items.map((entry, idx) => (
+                          <QueueItemRow
+                            key={entry.id}
+                            entry={entry}
+                            displayPosition={idx + 1}
+                            mine={entry.user_id === user?.id}
+                            iAmLeader={iAmLeader}
+                            loading={loading}
+                            onPenalty={handleLeaderPenalty}
+                            onRemove={handleLeaderRemove}
+                          />
+                        ))}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Badge
-                        variant={
-                          entry.status === 'in_bathroom'
-                            ? 'destructive'
-                            : entry.status === 'returned'
-                              ? 'default'
-                              : 'secondary'
-                        }
-                      >
-                        {entry.status === 'in_bathroom'
-                          ? 'No banheiro'
-                          : entry.status === 'returned'
-                            ? 'Voltou'
-                            : 'Aguardando'}
-                      </Badge>
-                      {iAmLeader && entry.user_id !== user?.id && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleLeaderPenalty(entry.user_id, text)}
-                            disabled={loading}
-                            className="flex h-8 w-8 items-center justify-center rounded hover:bg-accent"
-                            title="Aplicar penalidade"
-                            aria-label="Aplicar penalidade"
-                            data-testid={`leader-penalty-btn-${entry.position}`}
-                          >
-                            <AlertTriangle className="h-4 w-4 text-warning" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleLeaderRemove(entry.id)}
-                            disabled={loading}
-                            className="flex h-8 w-8 items-center justify-center rounded hover:bg-accent"
-                            title="Remover da fila"
-                            aria-label="Remover da fila"
-                            data-testid={`leader-remove-btn-${entry.position}`}
-                          >
-                            <XCircle className="h-4 w-4 text-destructive" />
-                          </button>
-                        </>
-                      )}
-                    </div>
+                    )}
                   </div>
                 );
               })}
+              {/* Outros sem gênero definido */}
+              {(() => {
+                const others = queue.filter(
+                  (e) =>
+                    e.profiles?.gender !== 'feminino' && e.profiles?.gender !== 'masculino',
+                );
+                if (others.length === 0) return null;
+                return (
+                  <div className="sm:col-span-2 rounded-lg border bg-muted/40 p-3">
+                    <h3 className="mb-2 text-sm font-semibold">Sem gênero definido</h3>
+                    <div className="space-y-2">
+                      {others.map((entry, idx) => (
+                        <QueueItemRow
+                          key={entry.id}
+                          entry={entry}
+                          displayPosition={idx + 1}
+                          mine={entry.user_id === user?.id}
+                          iAmLeader={iAmLeader}
+                          loading={loading}
+                          onPenalty={handleLeaderPenalty}
+                          onRemove={handleLeaderRemove}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {queue.map((entry) => (
+                <QueueItemRow
+                  key={entry.id}
+                  entry={entry}
+                  displayPosition={entry.position}
+                  mine={entry.user_id === user?.id}
+                  iAmLeader={iAmLeader}
+                  loading={loading}
+                  onPenalty={handleLeaderPenalty}
+                  onRemove={handleLeaderRemove}
+                />
+              ))}
             </div>
           )}
         </section>
