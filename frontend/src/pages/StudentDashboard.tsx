@@ -11,7 +11,10 @@ import {
   requestSwap,
   respondToSwap,
   clearClassroomQueue,
+  maybeWipeStaleQueue,
 } from '@/lib/queue';
+import PenaltyReasonDialog from '@/components/PenaltyReasonDialog';
+import ClassroomPenaltiesDialog from '@/components/ClassroomPenaltiesDialog';
 import { applyPenalty } from '@/lib/queue';
 import { fetchSchedules, computeStatus, BathroomSchedule } from '@/lib/schedule';
 import { Button } from '@/components/ui/button';
@@ -35,6 +38,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  Shield,
 } from 'lucide-react';
 import { StudentMenu } from '@/components/StudentMenu';
 
@@ -85,6 +89,18 @@ const StudentDashboard = () => {
   const [incomingSwap, setIncomingSwap] = useState<any>(null);
   const [incomingSwapDialogOpen, setIncomingSwapDialogOpen] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [penaltyTarget, setPenaltyTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [penaltySubmitting, setPenaltySubmitting] = useState(false);
+  const [penaltiesListOpen, setPenaltiesListOpen] = useState(false);
+  const [myPenalties, setMyPenalties] = useState<any[]>([]);
+  const [dismissedPenaltyIds, setDismissedPenaltyIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('educafila:dismissedPenalties');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const prevQueueOpenRef = React.useRef<boolean | null>(null);
 
   const classroomId = profile?.classroom_id;
@@ -269,11 +285,72 @@ const StudentDashboard = () => {
       fetchIncomingSwaps();
     }, 8000);
 
+    // Periodic stale-queue cleanup: any online student also enforces the
+    // "fresh queue when window opens" rule, so leftover entries from a
+    // previous session never persist — even if nobody was online at close.
+    const staleCheck = setInterval(() => {
+      if (classroomId && activeSchoolId) {
+        maybeWipeStaleQueue(classroomId, activeSchoolId).then((wiped) => {
+          if (wiped) fetchQueue();
+        });
+      }
+    }, 60_000);
+    if (classroomId && activeSchoolId) {
+      maybeWipeStaleQueue(classroomId, activeSchoolId).then((wiped) => {
+        if (wiped) fetchQueue();
+      });
+    }
+
+    return () => {
+      supabase.removeChannel(ch);
+      clearInterval(poll);
+      clearInterval(staleCheck);
+    };
+  }, [fetchClassroom, fetchQueue, fetchIncomingSwaps, loadSchedules, checkTimeoutAlert, classroomId, activeSchoolId]);
+
+  // Fetch the current user's OWN penalties so we can show the reason banner.
+  // Students never see other students' reasons — only teachers/leaders do,
+  // through the ClassroomPenaltiesDialog.
+  const fetchMyPenalties = useCallback(async () => {
+    if (!user?.id || !classroomId) return;
+    const { data } = await supabase
+      .from('penalties')
+      .select('id, reason, infraction_number, penalty_percent, created_at, applied_by')
+      .eq('user_id', user.id)
+      .eq('classroom_id', classroomId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    const list = (data ?? []) as any[];
+    // Enrich with applied_by name.
+    const appliers = Array.from(new Set(list.map((p) => p.applied_by).filter((u): u is string => !!u)));
+    let nameMap: Record<string, string> = {};
+    if (appliers.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .in('user_id', appliers);
+      for (const p of (profs ?? []) as any[]) nameMap[p.user_id] = p.full_name;
+    }
+    setMyPenalties(list.map((p) => ({ ...p, applied_by_name: p.applied_by ? nameMap[p.applied_by] : null })));
+  }, [user?.id, classroomId]);
+
+  useEffect(() => {
+    fetchMyPenalties();
+    if (!classroomId || !user?.id) return;
+    const ch = supabase
+      .channel(`student-penalties-${classroomId}-${Math.random().toString(36).slice(2, 8)}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'penalties', filter: `user_id=eq.${user.id}` },
+        fetchMyPenalties,
+      )
+      .subscribe();
+    const poll = setInterval(fetchMyPenalties, 15000);
     return () => {
       supabase.removeChannel(ch);
       clearInterval(poll);
     };
-  }, [fetchClassroom, fetchQueue, fetchIncomingSwaps, loadSchedules, checkTimeoutAlert, classroomId]);
+  }, [fetchMyPenalties, classroomId, user?.id]);
 
   // Re-render queue when the current user's display preferences change (after ProfileDialog save).
   useEffect(() => {
@@ -438,18 +515,32 @@ const StudentDashboard = () => {
     setSplitByGender((v) => !v);
   };
 
-  const handleLeaderPenalty = async (targetUserId: string, targetName: string) => {
+  const handleLeaderPenalty = (targetUserId: string, targetName: string) => {
+    // Open the reason dialog. The actual apply happens in handlePenaltyConfirmed.
     if (!classroomId || !activeSchoolId) return;
-    setLoading(true);
-    await applyPenalty(
-      targetUserId,
-      classroomId,
-      activeSchoolId,
-      `Penalidade aplicada pelo ${LEADER_LABEL[(profile as any)?.leader_role || 'lider']} da sala`,
-    );
-    toast({ title: 'Penalidade aplicada', description: `${targetName} foi recuado na fila.` });
-    await fetchQueue();
-    setLoading(false);
+    setPenaltyTarget({ userId: targetUserId, name: targetName });
+  };
+
+  const handlePenaltyConfirmed = async (reason: string) => {
+    if (!classroomId || !activeSchoolId || !penaltyTarget) return;
+    setPenaltySubmitting(true);
+    try {
+      await applyPenalty(
+        penaltyTarget.userId,
+        classroomId,
+        activeSchoolId,
+        reason,
+        user?.id,
+      );
+      toast({
+        title: 'Penalidade aplicada',
+        description: `${penaltyTarget.name} foi recuado na fila.`,
+      });
+      setPenaltyTarget(null);
+      await fetchQueue();
+    } finally {
+      setPenaltySubmitting(false);
+    }
   };
 
   return (
@@ -467,6 +558,70 @@ const StudentDashboard = () => {
       </header>
 
       <main className="container mx-auto max-w-2xl space-y-5 px-4 py-6">
+        {/* Banner de penalidades do próprio aluno (apenas ele enxerga) */}
+        {(() => {
+          const visible = myPenalties.filter((p) => !dismissedPenaltyIds.has(p.id));
+          if (visible.length === 0) return null;
+          return (
+            <Card className="border-warning bg-warning/10" data-testid="my-penalties-banner">
+              <CardContent className="space-y-2 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-warning">
+                  <AlertTriangle className="h-4 w-4" />
+                  Você recebeu {visible.length === 1 ? 'uma penalidade' : `${visible.length} penalidades`}
+                </div>
+                <div className="space-y-2">
+                  {visible.slice(0, 3).map((p) => (
+                    <div
+                      key={p.id}
+                      className="rounded-md bg-background p-2 text-xs text-foreground"
+                      data-testid={`my-penalty-${p.id}`}
+                    >
+                      <p className="font-semibold">
+                        {p.infraction_number}ª infração
+                        {p.penalty_percent ? ` · ${p.penalty_percent}% de recuo` : ''}
+                      </p>
+                      <p className="mt-1">
+                        <span className="font-semibold">Motivo: </span>
+                        {p.reason || <span className="italic text-muted-foreground">Sem motivo registrado.</span>}
+                      </p>
+                      {p.applied_by_name && (
+                        <p className="mt-0.5 text-muted-foreground">
+                          Aplicada por {p.applied_by_name}
+                        </p>
+                      )}
+                      <div className="mt-1 flex justify-end">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[11px]"
+                          data-testid={`dismiss-penalty-${p.id}`}
+                          onClick={() => {
+                            setDismissedPenaltyIds((prev) => {
+                              const next = new Set(prev);
+                              next.add(p.id);
+                              try {
+                                localStorage.setItem(
+                                  'educafila:dismissedPenalties',
+                                  JSON.stringify(Array.from(next)),
+                                );
+                              } catch {
+                                /* ignore */
+                              }
+                              return next;
+                            });
+                          }}
+                        >
+                          Entendi
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
         {/* Timer (quando no banheiro) */}
         {isInBathroom && (
           <Card className={`border-2 ${timerWarning ? 'border-destructive' : 'border-primary'}`}>
@@ -633,16 +788,29 @@ const StudentDashboard = () => {
               </span>
             </h2>
             {iAmLeader && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleToggleSplit}
-                disabled={loading}
-                data-testid="toggle-split-btn"
-              >
-                {splitByGender ? 'Unificar fila' : 'Dividir por gênero'}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPenaltiesListOpen(true)}
+                  data-testid="leader-open-penalties-btn"
+                  className="gap-1"
+                >
+                  <Shield className="h-4 w-4" />
+                  Penalidades
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleToggleSplit}
+                  disabled={loading}
+                  data-testid="toggle-split-btn"
+                >
+                  {splitByGender ? 'Unificar fila' : 'Dividir por gênero'}
+                </Button>
+              </div>
             )}
           </div>
 
@@ -844,6 +1012,25 @@ const StudentDashboard = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog: motivo da penalidade (líder/vice) */}
+      <PenaltyReasonDialog
+        open={!!penaltyTarget}
+        onOpenChange={(o) => {
+          if (!o) setPenaltyTarget(null);
+        }}
+        studentName={penaltyTarget?.name || ''}
+        onConfirm={handlePenaltyConfirmed}
+        submitting={penaltySubmitting}
+      />
+
+      {/* Dialog: lista de penalidades da sala (líder/vice) */}
+      <ClassroomPenaltiesDialog
+        open={penaltiesListOpen}
+        onOpenChange={setPenaltiesListOpen}
+        classroomId={classroomId || ''}
+        classroomName={classroomName}
+      />
     </div>
   );
 };
