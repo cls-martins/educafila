@@ -10,6 +10,7 @@ import {
   finishBathroom,
   requestSwap,
   respondToSwap,
+  clearClassroomQueue,
 } from '@/lib/queue';
 import { applyPenalty } from '@/lib/queue';
 import { fetchSchedules, computeStatus, BathroomSchedule } from '@/lib/schedule';
@@ -83,6 +84,8 @@ const StudentDashboard = () => {
   const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
   const [incomingSwap, setIncomingSwap] = useState<any>(null);
   const [incomingSwapDialogOpen, setIncomingSwapDialogOpen] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const prevQueueOpenRef = React.useRef<boolean | null>(null);
 
   const classroomId = profile?.classroom_id;
 
@@ -230,8 +233,11 @@ const StudentDashboard = () => {
     loadSchedules();
     checkTimeoutAlert();
     if (!classroomId) return;
+    // Unique channel name per classroom + mount avoids collisions when the
+    // user switches classrooms or the app hot-reloads in dev.
+    const channelName = `student-queue-${classroomId}-${Math.random().toString(36).slice(2, 8)}`;
     const ch = supabase
-      .channel('student-queue-realtime')
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'queue_entries', filter: `classroom_id=eq.${classroomId}` },
@@ -253,8 +259,19 @@ const StudentDashboard = () => {
         fetchClassroom,
       )
       .subscribe();
+
+    // --- Polling fallback ---------------------------------------------------
+    // If Supabase Realtime publication isn't enabled for one of these tables,
+    // or the websocket drops silently, we still want the UI to stay fresh.
+    // Refresh every 8s — cheap queries, high perceived responsiveness.
+    const poll = setInterval(() => {
+      fetchQueue();
+      fetchIncomingSwaps();
+    }, 8000);
+
     return () => {
       supabase.removeChannel(ch);
+      clearInterval(poll);
     };
   }, [fetchClassroom, fetchQueue, fetchIncomingSwaps, loadSchedules, checkTimeoutAlert, classroomId]);
 
@@ -366,6 +383,31 @@ const StudentDashboard = () => {
   const joinDisabled =
     loading || !!myEntry || !classroomId || !activeSchoolId || (!queueOpen && schedules.length > 0);
   const iAmLeader = !!(profile as any)?.leader_role;
+
+  // --- Auto-wipe on queue close ---------------------------------------------
+  // When the schedule window transitions from OPEN → CLOSED, the queue is
+  // considered ended: clear all entries so the next window starts fresh.
+  // Guarded by localStorage to avoid multiple connected clients each firing
+  // the same DELETE within seconds (idempotent but wasteful).
+  useEffect(() => {
+    if (!classroomId || schedules.length === 0) return;
+    const prev = prevQueueOpenRef.current;
+    prevQueueOpenRef.current = queueOpen;
+    if (prev === true && queueOpen === false) {
+      const key = `educafila:lastClear:${classroomId}`;
+      const last = Number(localStorage.getItem(key) || '0');
+      if (Date.now() - last > 90_000) {
+        localStorage.setItem(key, String(Date.now()));
+        clearClassroomQueue(classroomId)
+          .then(() => {
+            fetchQueue();
+          })
+          .catch(() => void 0);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueOpen, classroomId, schedules.length]);
+  // -------------------------------------------------------------------------
 
   const handleLeaderRemove = async (entryId: string) => {
     if (!classroomId || !activeSchoolId) return;
@@ -559,7 +601,7 @@ const StudentDashboard = () => {
               )}
               <div className="flex gap-2">
                 <Button
-                  onClick={handleLeave}
+                  onClick={() => setLeaveConfirmOpen(true)}
                   disabled={loading}
                   variant="destructive"
                   className="flex-1"
@@ -768,6 +810,36 @@ const StudentDashboard = () => {
             </AlertDialogCancel>
             <AlertDialogAction onClick={() => handleRespondSwap(true)}>
               <CheckCircle2 className="mr-1 h-4 w-4" /> Aceitar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmação: sair da fila */}
+      <AlertDialog open={leaveConfirmOpen} onOpenChange={setLeaveConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sair da fila?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se você sair agora, perderá sua posição
+              {myEntry ? ` (${myEntry.position}° na fila)` : ''} e terá que
+              entrar novamente no final. Tem certeza?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="leave-cancel-btn">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                setLeaveConfirmOpen(false);
+                await handleLeave();
+              }}
+              data-testid="leave-confirm-btn"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              <LogOut className="mr-1 h-4 w-4" />
+              Sim, sair
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

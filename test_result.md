@@ -173,6 +173,39 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "TeacherDashboard reescrito. Adicionado botão 'Dividir por gênero/Unificar fila' no header da card da fila. Fetch + realtime UPDATE em classrooms.split_queue_by_gender. Quando ativado, render em 2 colunas (Feminino rosa / Masculino azul) + seção 'Sem gênero definido' se houver. Avatares exibidos em todas as linhas. Alunos veem a divisão via realtime (já implementado em StudentDashboard)."
+  - task: "Feature 9: Confirm dialog before leaving queue"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/StudentDashboard.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Botão 'Sair da Fila' abre AlertDialog com confirmação ('Sim, sair' / 'Cancelar'). Mostra posição atual perdida na descrição."
+  - task: "Feature 10: Realtime reliability (polling fallback 8s)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/StudentDashboard.tsx + TeacherDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Canais realtime agora com nome único por classroom+mount. Adicionado polling de 8s como fallback (fetchQueue + fetchIncomingSwaps) em caso do Supabase Realtime não estar publicado em queue_entries/swap_requests/bathroom_logs."
+  - task: "Feature 11: Auto-clear queue when schedule closes"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/lib/queue.ts + StudentDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "(a) Novo clearClassroomQueue() em lib/queue.ts. (b) useEffect no StudentDashboard detecta transição queueOpen true→false e dispara clearClassroomQueue (debounce 90s via localStorage). (c) enterQueue() agora faz limpeza defensiva: se a entrada mais antiga for anterior ao início da janela aberta atual (ou > 10min sem janela aberta), wipe antes de inserir. Garante fila limpa na próxima sessão mesmo se ninguém estiver online no fechamento."
 
 metadata:
   created_by: "main_agent"

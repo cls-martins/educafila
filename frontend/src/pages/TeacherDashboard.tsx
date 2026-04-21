@@ -119,7 +119,7 @@ const TeacherDashboard = () => {
     fetchQueue();
     if (!selectedClassroom) return;
     const channel = supabase
-      .channel(`teacher-queue-${selectedClassroom}`)
+      .channel(`teacher-queue-${selectedClassroom}-${Math.random().toString(36).slice(2, 8)}`)
       .on(
         'postgres_changes',
         {
@@ -141,8 +141,13 @@ const TeacherDashboard = () => {
         fetchClassroomSettings,
       )
       .subscribe();
+    // Polling fallback — keeps UI fresh even if realtime publication is off.
+    const poll = setInterval(() => {
+      fetchQueue();
+    }, 8000);
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(poll);
     };
   }, [fetchQueue, fetchClassroomSettings, selectedClassroom]);
 

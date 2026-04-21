@@ -32,6 +32,58 @@ export async function enterQueue(
     return { data: mine[0], error: null };
   }
 
+  // --- Stale queue guard ---------------------------------------------------
+  // "Quando a fila encerra, remove todos; quando inicia, é uma nova fila."
+  // If there are entries in this classroom that were joined BEFORE today's
+  // currently-open schedule window started (or, if no window is currently
+  // open, older than 10 minutes), we consider the queue stale and wipe it.
+  try {
+    const { data: oldest } = await supabase
+      .from('queue_entries')
+      .select('joined_at')
+      .eq('classroom_id', classroomId)
+      .order('joined_at', { ascending: true })
+      .limit(1);
+    if (oldest && oldest.length > 0) {
+      const oldestTs = new Date(oldest[0].joined_at).getTime();
+      const now = new Date();
+      const { data: schedules } = await supabase
+        .from('bathroom_schedules' as any)
+        .select('weekday, start_time, end_time, is_active')
+        .eq('school_id', schoolId)
+        .eq('is_active', true);
+      const jsDay = now.getDay();
+      const weekday = jsDay === 0 ? null : jsDay;
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const sToMin = (t: string) => {
+        const [h, m] = t.split(':').map((n) => parseInt(n, 10));
+        return h * 60 + m;
+      };
+      const currentWin = ((schedules ?? []) as any[]).find(
+        (s) =>
+          s.weekday === weekday &&
+          sToMin(s.start_time) <= nowMin &&
+          nowMin < sToMin(s.end_time),
+      );
+      let shouldWipe = false;
+      if (currentWin) {
+        const [sH, sM] = (currentWin.start_time as string).split(':').map(Number);
+        const winStart = new Date(now);
+        winStart.setHours(sH, sM, 0, 0);
+        if (oldestTs < winStart.getTime()) shouldWipe = true;
+      } else {
+        // No open window right now — if any entry is older than 10 min, wipe.
+        if (Date.now() - oldestTs > 10 * 60 * 1000) shouldWipe = true;
+      }
+      if (shouldWipe) {
+        await supabase.from('queue_entries').delete().eq('classroom_id', classroomId);
+      }
+    }
+  } catch {
+    // Best-effort cleanup; proceed regardless.
+  }
+  // -------------------------------------------------------------------------
+
   const { data: existing } = await supabase
     .from('queue_entries')
     .select('position')
@@ -49,6 +101,14 @@ export async function enterQueue(
     position: nextPosition,
     status: 'waiting' as any,
   });
+}
+
+/**
+ * Wipe every queue_entry for a classroom. Used when the schedule closes so
+ * the next open window starts with a fresh queue.
+ */
+export async function clearClassroomQueue(classroomId: string): Promise<void> {
+  await supabase.from('queue_entries').delete().eq('classroom_id', classroomId);
 }
 
 export async function leaveQueue(
