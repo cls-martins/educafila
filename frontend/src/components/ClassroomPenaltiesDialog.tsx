@@ -6,6 +6,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -97,6 +107,7 @@ export const ClassroomPenaltiesDialog: React.FC<Props> = ({
   const [penaltyTarget, setPenaltyTarget] = useState<StudentOption | null>(null);
   const [penaltySubmitting, setPenaltySubmitting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<PenaltyRow | null>(null);
 
   const isClassroomScope = !!classroomId;
 
@@ -166,24 +177,23 @@ export const ClassroomPenaltiesDialog: React.FC<Props> = ({
 
   const fetchStudents = useCallback(async () => {
     if (!schoolId) return;
-    // Get all "aluno" user_ids in this school to cross-filter.
-    const { data: roles } = await supabase
-      .from('user_roles')
-      .select('user_id, role')
-      .eq('role', 'aluno');
-    const alunoIds = new Set(((roles ?? []) as any[]).map((r) => r.user_id));
-
+    // NOTE: We intentionally do NOT cross-filter by user_roles.role='aluno'
+    // because the RLS on user_roles typically only allows a user to read
+    // their OWN role — which makes that query return an empty set for
+    // teachers / management. Instead we rely on the rule that in this app
+    // ONLY students carry a `classroom_id` on their profile (teachers are
+    // linked via teacher_schools/teacher_classrooms, management via
+    // school_staff). So "profile with a classroom_id" ≈ "aluno".
     const baseQ = supabase
       .from('profiles')
       .select('user_id, full_name, classroom_id, school_id')
       .eq('school_id', schoolId)
+      .not('classroom_id', 'is', null)
       .order('full_name');
     const { data: profs } = isClassroomScope
       ? await baseQ.eq('classroom_id', classroomId!)
       : await baseQ;
-    const filtered = ((profs ?? []) as any[]).filter(
-      (p) => p.classroom_id && alunoIds.has(p.user_id),
-    );
+    const filtered = ((profs ?? []) as any[]).filter((p) => !!p.classroom_id);
     const classIds = Array.from(new Set(filtered.map((p) => p.classroom_id)));
     const classMap: Record<string, string> = {};
     if (classIds.length) {
@@ -240,21 +250,34 @@ export const ClassroomPenaltiesDialog: React.FC<Props> = ({
     }
   };
 
-  const handleRemove = async (id: string, studentName: string) => {
-    if (!window.confirm(`Remover esta penalidade de ${studentName}?`)) return;
+  const handleRemoveConfirmed = async () => {
+    if (!removeTarget) return;
+    const { id, student_name } = removeTarget;
     setRemovingId(id);
     try {
-      await removePenalty(id);
-      toast({ title: 'Penalidade removida' });
-      fetchPenalties();
+      const { error } = await removePenalty(id);
+      if (error) {
+        toast({
+          title: 'Erro ao remover',
+          description: error.message ?? 'Tente novamente.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Penalidade removida',
+          description: `${student_name} foi atualizado(a).`,
+        });
+        await fetchPenalties();
+      }
     } catch (err: any) {
       toast({
-        title: 'Erro ao remover',
+        title: 'Erro inesperado',
         description: err?.message ?? 'Tente novamente.',
         variant: 'destructive',
       });
     } finally {
       setRemovingId(null);
+      setRemoveTarget(null);
     }
   };
 
@@ -405,7 +428,7 @@ export const ClassroomPenaltiesDialog: React.FC<Props> = ({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          onClick={() => handleRemove(r.id, r.student_name)}
+                          onClick={() => setRemoveTarget(r)}
                           disabled={removingId === r.id}
                           data-testid={`penalty-remove-${r.id}`}
                           title="Remover penalidade"
@@ -505,6 +528,45 @@ export const ClassroomPenaltiesDialog: React.FC<Props> = ({
         onConfirm={handleApplyToStudent}
         submitting={penaltySubmitting}
       />
+
+      {/* Confirm penalty removal */}
+      <AlertDialog
+        open={!!removeTarget}
+        onOpenChange={(o) => {
+          if (!o && removingId === null) setRemoveTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover penalidade?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remover a {removeTarget?.infraction_number ?? '?'}ª penalidade de{' '}
+              <span className="font-semibold">{removeTarget?.student_name}</span>?
+              O contador na fila será recalculado automaticamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              data-testid="penalty-remove-cancel"
+              disabled={!!removingId}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="penalty-remove-confirm"
+              disabled={!!removingId}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRemoveConfirmed();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              <Trash2 className="mr-1 h-4 w-4" />
+              {removingId ? 'Removendo...' : 'Remover'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

@@ -59,26 +59,17 @@ export const LeaderManager: React.FC<Props> = ({ schoolId }) => {
       return;
     }
     setLoading(true);
-    // Students of this classroom that have role 'aluno'. We intentionally do
-    // NOT filter by `is_active` here — accounts provisioned before that flag
-    // was enforced can have a NULL/false value and would otherwise be hidden
-    // from the Management / SuperAdmin leader picker.
+    // Students of this classroom. We identify students as "profile with a
+    // classroom_id" (teachers/management don't have classroom_id on their
+    // profile). We deliberately avoid cross-filtering by `user_roles` because
+    // its RLS typically only exposes the caller's OWN role, which would
+    // return an empty set for Management / SuperAdmin and break this picker.
     const { data: profs } = await supabase
       .from('profiles')
       .select('user_id, full_name, classroom_id, leader_role')
       .eq('classroom_id', selectedClassroom)
       .order('full_name');
-    const ids = ((profs as any) ?? []).map((p: any) => p.user_id);
-    let alunoSet = new Set<string>();
-    if (ids.length) {
-      const { data: roles } = await supabase
-        .from('user_roles')
-        .select('user_id')
-        .eq('role', 'aluno')
-        .in('user_id', ids);
-      alunoSet = new Set(((roles as any) ?? []).map((r: any) => r.user_id));
-    }
-    setStudents(((profs as any) ?? []).filter((p: any) => alunoSet.has(p.user_id)));
+    setStudents(((profs as any) ?? []));
     setLoading(false);
   }, [selectedClassroom]);
 

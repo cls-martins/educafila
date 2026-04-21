@@ -323,22 +323,35 @@ export async function syncUserPenaltyCount(
 }
 
 /**
- * Remove a single penalty. After removing, resync the queue_entry counter so
- * the displayed count reflects the real history. Optionally revert the
- * student's position bump (best-effort — we leave queue position alone as
- * reshuffling mid-fila would be confusing).
+ * Remove a single penalty. Returns the Supabase error (if any) so the UI can
+ * surface it — important because RLS policies may block the DELETE silently
+ * otherwise.
  */
-export async function removePenalty(penaltyId: string): Promise<void> {
+export async function removePenalty(penaltyId: string): Promise<{ error: any }> {
   // Fetch the row first so we know which user/school to resync.
   const { data: row } = await supabase
     .from('penalties')
     .select('user_id, school_id')
     .eq('id', penaltyId)
     .maybeSingle();
-  await supabase.from('penalties').delete().eq('id', penaltyId);
+  const { error, count } = await supabase
+    .from('penalties')
+    .delete({ count: 'exact' })
+    .eq('id', penaltyId);
+  if (error) return { error };
+  if ((count ?? 0) === 0) {
+    // No error but nothing deleted → almost always an RLS policy blocking it.
+    return {
+      error: {
+        message:
+          'Permissão negada para remover penalidades. Verifique as políticas RLS da tabela `penalties` no Supabase (DELETE para gestão/professor/líder).',
+      },
+    };
+  }
   if (row?.user_id && row?.school_id) {
     await syncUserPenaltyCount(row.user_id, row.school_id);
   }
+  return { error: null };
 }
 
 /**
