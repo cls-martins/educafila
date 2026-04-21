@@ -103,13 +103,10 @@
 #====================================================================================================
 
 user_problem_statement: |
-  EducaFila (Supabase + Vite/React) bugs reportados pelo usuário:
-  1. Login só funciona na 2ª tentativa (redireciona pra /login de primeira)
-  2. Cadastro de professor/direção/coordenação não aparece na tabela "Equipe"
-  3. Não deve exigir @prof.ce.gov.br para professores
-  4. Usuário consegue logar em área errada (ex: professor entra na aba Gestão)
-  5. Ao criar escola, deve existir fluxo de Cursos que gera 1°/2°/3° ano automaticamente
-  6. Remover aba "Novos" do SuperAdminDashboard
+  EducaFila (Supabase + Vite/React) — continuação de projeto Lovable:
+  7. Alunos podem colocar foto de perfil e EXIBIR a foto na fila
+  8. Professores + líder + vice-líder podem dividir a fila em 2 colunas
+     (feminina/masculina); alunos veem a divisão automaticamente
 
 frontend:
   - task: "Fix 1: AuthContext race condition (login 2x)"
@@ -154,6 +151,28 @@ frontend:
     stuck_count: 0
     priority: "low"
     needs_retesting: true
+  - task: "Feature 7: Show student avatar in queue (QueueItemRow)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/StudentDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Build estava quebrado — QueueItemRow era referenciado mas não existia + <section> duplicada. Criado QueueItemRow com avatar (img do profiles.avatar_url com fallback para inicial do nome), nome colorido, badge de líder, status e botões de líder (penalidade/remover). Upload já existia no ProfileDialog (bucket 'avatars')."
+  - task: "Feature 8: Teacher can split queue by gender"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/TeacherDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "TeacherDashboard reescrito. Adicionado botão 'Dividir por gênero/Unificar fila' no header da card da fila. Fetch + realtime UPDATE em classrooms.split_queue_by_gender. Quando ativado, render em 2 colunas (Feminino rosa / Masculino azul) + seção 'Sem gênero definido' se houver. Avatares exibidos em todas as linhas. Alunos veem a divisão via realtime (já implementado em StudentDashboard)."
 
 metadata:
   created_by: "main_agent"
@@ -163,10 +182,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Fix 1: AuthContext race condition (login 2x)"
-    - "Fix 2: Staff register + query"
-    - "Fix 4: Enforce tab→role mapping on login"
-    - "Fix 5: Courses tab + auto-generate classrooms"
+    - "Feature 7: Show student avatar in queue (QueueItemRow)"
+    - "Feature 8: Teacher can split queue by gender"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -174,3 +191,17 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Implementing 6 frontend fixes on existing Supabase app. No backend changes. Will require manual/UI testing after implementation."
+  - agent: "main"
+    message: |
+      Continuação do projeto Lovable (créditos expiraram no meio). Infra Supabase
+      já pronta (colunas avatar_url, gender, split_queue_by_gender, bucket
+      avatars, RLS). Corrigido BUILD QUEBRADO (QueueItemRow faltando + section
+      duplicada) e adicionado:
+      - StudentDashboard: QueueItemRow novo com avatar redondo + fallback de
+        inicial, nome colorido, badge líder, status, ações do líder.
+      - TeacherDashboard: botão 'Dividir por gênero' (persiste em
+        classrooms.split_queue_by_gender) + render em 2 colunas
+        (Feminino rosa / Masculino azul) + avatares.
+      yarn build OK. Aguardando usuário: (a) testar manualmente com conta real
+      no Vercel/preview OU (b) passar credenciais de teste para acionar o
+      frontend agent.

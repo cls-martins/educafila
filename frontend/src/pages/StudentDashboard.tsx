@@ -583,14 +583,6 @@ const StudentDashboard = () => {
 
         {/* Lista da fila */}
         <section>
-          <h2 className="mb-3 text-xl font-bold">
-            Lista do Banheiro {classroomName ? `— ${classroomName}` : ''}{' '}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({queue.length} na fila)
-            </span>
-          </h2>
-        {/* Lista da fila */}
-        <section>
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-xl font-bold">
               Lista do Banheiro {classroomName ? `— ${classroomName}` : ''}{' '}
@@ -780,6 +772,136 @@ const StudentDashboard = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+};
+
+/* -----------------------------------------------------------------------
+ * QueueItemRow — linha da fila com avatar, nome colorido e ações do líder.
+ * Usado tanto na fila unificada quanto nas colunas (Feminino/Masculino).
+ * ----------------------------------------------------------------------- */
+interface QueueItemRowProps {
+  entry: QueueRow & {
+    updated_at?: string;
+    penalty_count?: number;
+  };
+  displayPosition: number;
+  mine: boolean;
+  iAmLeader: boolean;
+  loading: boolean;
+  onPenalty: (userId: string, name: string) => void;
+  onRemove: (entryId: string) => void;
+}
+
+const QueueItemRow: React.FC<QueueItemRowProps> = ({
+  entry,
+  displayPosition,
+  mine,
+  iAmLeader,
+  loading,
+  onPenalty,
+  onRemove,
+}) => {
+  const { text: displayName, color: nameColor } = renderDisplayName(entry.profiles);
+  const avatarUrl = entry.profiles?.avatar_url;
+  const fullName = entry.profiles?.full_name || '';
+  const leaderRole = entry.profiles?.leader_role;
+  const isInBathroom = entry.status === 'in_bathroom';
+  const isPenalized = entry.status === 'penalized';
+  const penaltyCount = entry.penalty_count || 0;
+
+  return (
+    <div
+      className={`flex items-center justify-between gap-2 rounded-lg border p-3 transition ${
+        mine
+          ? 'border-primary bg-primary/5'
+          : isInBathroom
+            ? 'border-warning/40 bg-warning/5'
+            : 'border-border bg-card'
+      }`}
+      data-testid={`queue-row-${entry.position}`}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+            mine ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary'
+          }`}
+        >
+          {displayPosition}
+        </span>
+        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-border bg-secondary">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={fullName || 'Avatar'}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              data-testid={`queue-avatar-${entry.position}`}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-sm font-bold text-muted-foreground">
+              {(fullName || '?').slice(0, 1).toUpperCase()}
+            </div>
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold" style={{ color: nameColor }}>
+            {displayName}
+            {mine && (
+              <span className="ml-1 text-[11px] font-normal text-primary">(você)</span>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            {leaderRole && (
+              <Badge variant="secondary" className="h-4 px-1.5 text-[10px] font-semibold">
+                {LEADER_LABEL[leaderRole]}
+              </Badge>
+            )}
+            {isInBathroom ? (
+              <span className="font-medium text-warning">🚻 No banheiro</span>
+            ) : isPenalized ? (
+              <span className="font-medium text-destructive">Penalizado</span>
+            ) : (
+              <span>Aguardando</span>
+            )}
+            {penaltyCount > 0 && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-destructive/10 px-1.5 py-0.5 font-semibold text-destructive">
+                <AlertTriangle className="h-3 w-3" />
+                {penaltyCount}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {iAmLeader && !mine && (
+        <div className="flex shrink-0 gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={loading}
+            onClick={() => onPenalty(entry.user_id, fullName)}
+            title="Aplicar penalidade"
+            data-testid={`penalty-btn-${entry.position}`}
+          >
+            <AlertTriangle className="h-4 w-4 text-warning" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={loading}
+            onClick={() => onRemove(entry.id)}
+            title="Remover da fila"
+            data-testid={`remove-btn-${entry.position}`}
+          >
+            <XCircle className="h-4 w-4 text-destructive" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 };
